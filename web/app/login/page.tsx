@@ -12,7 +12,8 @@ function LoginForm() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  // /auth/callback 이 실패 사유를 error 파라미터로 넘겨준다.
+  const [error, setError] = useState<string | null>(params.get("error"));
   const [info, setInfo] = useState<string | null>(null);
 
   async function signIn(e: React.FormEvent) {
