@@ -35,9 +35,13 @@ function LoginForm() {
     setError(null);
     setInfo(null);
     const sb = getBrowserSupabase();
+    // PKCE 플로우라 ?code= 를 /auth/callback 에서 세션으로 교환해야 한다.
+    // 루트로 바로 돌려보내면 미들웨어가 /login 으로 리다이렉트하면서 code를 버린다.
     const { error } = await sb.auth.signInWithOtp({
       email,
-      options: { emailRedirectTo: `${location.origin}${redirect}` },
+      options: {
+        emailRedirectTo: `${location.origin}/auth/callback?next=${encodeURIComponent(redirect)}`,
+      },
     });
     setLoading(false);
     if (error) {
