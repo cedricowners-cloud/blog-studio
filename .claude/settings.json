@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx tsc *)",
+      "Bash(echo \"---exit: $?---\")",
+      "Bash(pkill -f \"next dev\")",
+      "Bash(npm run *)"
+    ]
+  }
+}

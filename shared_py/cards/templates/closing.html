@@ -1,0 +1,8 @@
+{% extends '_base.html' %}
+{% block card %}
+<div class="closing">
+  <div class="closing__message">{{ message | replace('\n', '<br>') | safe }}</div>
+  {% if cta %}<div class="closing__cta">{{ cta }}</div>{% endif %}
+  <div class="closing__brand">@{{ brand_name }}</div>
+</div>
+{% endblock %}

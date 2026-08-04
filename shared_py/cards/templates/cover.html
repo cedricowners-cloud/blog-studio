@@ -1,0 +1,9 @@
+{% extends '_base.html' %}
+{% block card %}
+<div class="cover">
+  {% if eyebrow %}<div class="cover__eyebrow">{{ eyebrow }}</div>{% endif %}
+  <h1 class="cover__title">{{ main_title | replace('\n', '<br>') | safe }}</h1>
+  {% if sub_title %}<h2 class="cover__subtitle">{{ sub_title | replace('\n', '<br>') | safe }}</h2>{% endif %}
+  {% if tagline %}<div class="cover__tagline">{{ tagline }}</div>{% endif %}
+</div>
+{% endblock %}

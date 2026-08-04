@@ -1,0 +1,135 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "BlogPostGenerationInput",
+  "description": "네이버 블로그 v2 온톨로지 엔진 입력 스키마",
+  "type": "object",
+  "required": ["method_id", "topic", "main_keyword", "sub_keywords"],
+  "properties": {
+    "method_id": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 6,
+      "description": "사용할 프롬프트 방식 (1: C랭크 다이아플러스, 2: 알콘, 3: AEO, 4: 홈피드, 5: 인사이트 엣지, 6: C랭크 정보성)"
+    },
+    "topic": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 200,
+      "description": "글 주제 (예: 2026 소상공인 혁신성장촉진자금 스마트기술)"
+    },
+    "main_keyword": {
+      "type": "string",
+      "minLength": 2,
+      "maxLength": 50,
+      "description": "메인 검색 키워드 (제목 앞쪽에 배치될 핵심 키워드)"
+    },
+    "sub_keywords": {
+      "type": "array",
+      "items": {"type": "string"},
+      "minItems": 1,
+      "maxItems": 10,
+      "description": "서브 키워드 배열 (본문에 자연 배치될 보조 키워드)"
+    },
+    "target_awareness_level": {
+      "type": "string",
+      "enum": ["L1", "L2", "L3", "L4"],
+      "default": "L2",
+      "description": "타겟 독자 인지단계. L1: 주제 모름, L2: 자격 궁금, L3: 방법 궁금, L4: 실패 경험"
+    },
+    "domain_info": {
+      "type": "object",
+      "description": "도메인 특화 정보 (예: 정부지원사업의 경우 사업 상세). 방식 6에서 특히 중요.",
+      "properties": {
+        "사업명": {"type": "string"},
+        "주관기관": {"type": "string"},
+        "근거법령": {"type": "string"},
+        "지원유형": {"type": "string"},
+        "지원규모": {"type": "object"},
+        "자격요건": {"type": "object"},
+        "제외요건": {"type": "array"},
+        "접수방식": {"type": "string"},
+        "공고주기": {"type": "string"}
+      },
+      "additionalProperties": true
+    },
+    "persona": {
+      "type": "string",
+      "default": "30대 경영자/대표",
+      "description": "글쓴이 페르소나 (톤/호칭 설정)"
+    },
+    "brand_voice": {
+      "type": "object",
+      "description": "브랜드 보이스 (선택). 설정 시 모든 방식 프롬프트에 작성자 정체성이 자동 반영됨.",
+      "properties": {
+        "author_identity": {
+          "type": "string",
+          "description": "작성자 정체성 (예: 공공조달행정사, 경영컨설팅 전문가)"
+        },
+        "consultancy_name": {
+          "type": "string",
+          "description": "소속명 (예: 오너스경영연구소)"
+        }
+      }
+    },
+    "generation_options": {
+      "type": "object",
+      "description": "생성 옵션",
+      "properties": {
+        "max_retries": {
+          "type": "integer",
+          "default": 2,
+          "description": "공리 통과 실패 시 최대 재시도 횟수"
+        },
+        "axiom_pass_threshold": {
+          "type": "number",
+          "default": 1.0,
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "description": "공리 통과율 임계값 (1.0 = 100% 통과 필수)"
+        },
+        "min_body_char_count": {
+          "type": "integer",
+          "default": 1500,
+          "description": "본문 최소 글자수"
+        }
+      }
+    }
+  },
+  "examples": [
+    {
+      "method_id": 6,
+      "topic": "2026 소상공인 혁신성장촉진자금 스마트기술",
+      "main_keyword": "혁신성장촉진자금 스마트기술",
+      "sub_keywords": ["소진공", "소상공인 정책자금", "2026 스마트기술 지원", "스마트상점 기술보급"],
+      "target_awareness_level": "L2",
+      "domain_info": {
+        "사업명": "혁신성장촉진자금 - 스마트기술",
+        "주관기관": "소상공인시장진흥공단(소진공)",
+        "근거법령": "소상공인 보호 및 지원에 관한 법률 제9조",
+        "지원유형": "융자(직접대출)",
+        "지원규모": {
+          "한도금액": "업체당 최대 1억 원",
+          "금리": "2026년 1분기 기준 연 2.96% + 자금별 가산금리",
+          "상환기간": "5년 이내(거치기간 2년 포함)"
+        },
+        "제외요건": [
+          "2026년 4월부터 일부 자동화 기기 제외",
+          "국세·지방세 체납",
+          "동일 스마트기술 중복수혜"
+        ],
+        "접수방식": "온라인(ols.semas.or.kr)",
+        "공고주기": "분기별 (2026년 4월부터)"
+      },
+      "persona": "공공조달 전문 행정사",
+      "brand_voice": {
+        "author_identity": "공공조달행정사",
+        "consultancy_name": "오너스경영연구소"
+      },
+      "generation_options": {
+        "max_retries": 2,
+        "axiom_pass_threshold": 1.0,
+        "min_body_char_count": 1500
+      }
+    }
+  ]
+}

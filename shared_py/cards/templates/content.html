@@ -1,0 +1,9 @@
+{% extends '_base.html' %}
+{% block card %}
+<div class="content">
+  {% if section_label %}<div class="content__section">{{ section_label }}</div>{% endif %}
+  <h2 class="content__heading">{{ heading | replace('\n', '<br>') | safe }}</h2>
+  {% if lead %}<p class="content__lead">{{ lead }}</p>{% endif %}
+  {% if body_text %}<p class="content__body">{{ body_text }}</p>{% endif %}
+</div>
+{% endblock %}

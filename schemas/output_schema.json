@@ -1,0 +1,131 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "BlogPostGenerationOutput",
+  "description": "네이버 블로그 v2 온톨로지 엔진 출력 스키마 (LLM 응답 파싱 후)",
+  "type": "object",
+  "required": ["mapping", "titles", "body", "axiom_check", "suggestions", "meta"],
+  "properties": {
+    "mapping": {
+      "type": "object",
+      "description": "§1. 온톨로지 매핑 결과",
+      "properties": {
+        "domain_structure": {
+          "type": "object",
+          "description": "도메인 정보 JSON 구조화 결과 (Ontology A)"
+        },
+        "reader_mapping": {
+          "type": "object",
+          "description": "독자 매핑 (Ontology B)",
+          "properties": {
+            "awareness_level": {"type": "string", "enum": ["L1", "L2", "L3", "L4"]},
+            "pain_points_top3": {"type": "array", "items": {"type": "string"}},
+            "strategy_position": {"type": "string"}
+          }
+        },
+        "keyword_map": {
+          "type": "array",
+          "description": "키워드 배치 맵",
+          "items": {
+            "type": "object",
+            "properties": {
+              "location": {"type": "string"},
+              "keyword": {"type": "string"},
+              "count": {"type": "integer"}
+            }
+          }
+        }
+      }
+    },
+    "titles": {
+      "type": "array",
+      "description": "§2. 추천 제목 3안",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": {
+        "type": "object",
+        "properties": {
+          "rank": {"type": "integer"},
+          "title": {"type": "string"},
+          "main_keyword_position": {"type": "string"},
+          "click_driver": {"type": "string"},
+          "ctr_stars": {"type": "integer", "minimum": 1, "maximum": 5}
+        }
+      }
+    },
+    "body": {
+      "type": "string",
+      "description": "§3. 본문 (네이버 블로그 게시용 원고). 이미지 태그 [IMG: alt] 포함.",
+      "minLength": 1000
+    },
+    "axiom_check": {
+      "type": "object",
+      "description": "§4. 공리 검증표",
+      "required": ["total", "passed", "failed", "items"],
+      "properties": {
+        "total": {"type": "integer"},
+        "passed": {"type": "integer"},
+        "failed": {"type": "integer"},
+        "pass_rate": {"type": "string", "description": "예: 17/17"},
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "number": {"type": "integer"},
+              "rule": {"type": "string"},
+              "passed": {"type": "boolean"},
+              "evidence": {"type": "string"}
+            }
+          }
+        },
+        "failed_rules": {
+          "type": "array",
+          "items": {"type": "integer"},
+          "description": "실패한 공리 번호 배열"
+        }
+      }
+    },
+    "suggestions": {
+      "type": "object",
+      "description": "§5. 개선 제안 2개",
+      "properties": {
+        "current_post_improvements": {"type": "string"},
+        "series_strategy": {
+          "type": "object",
+          "properties": {
+            "related_levels": {"type": "array", "items": {"type": "string"}},
+            "next_posts": {"type": "array", "items": {"type": "string"}}
+          }
+        }
+      }
+    },
+    "meta": {
+      "type": "object",
+      "description": "§6. 메타 정보 (자동화 연동용)",
+      "properties": {
+        "method_id": {"type": "integer"},
+        "main_keyword": {"type": "string"},
+        "sub_keywords": {"type": "array", "items": {"type": "string"}},
+        "target_awareness_level": {"type": "string"},
+        "content_type": {"type": "string"},
+        "related_series": {"type": "array", "items": {"type": "string"}},
+        "internal_link_candidates": {"type": "array", "items": {"type": "string"}},
+        "reference_sources": {"type": "array", "items": {"type": "string"}},
+        "estimated_char_count": {"type": "integer"},
+        "axiom_pass_rate": {"type": "string"},
+        "last_verified": {"type": "string", "format": "date"}
+      }
+    },
+    "_generation_info": {
+      "type": "object",
+      "description": "시스템 내부용 메타 (LLM 응답에는 없고 처리 시 추가)",
+      "properties": {
+        "final_attempt": {"type": "integer"},
+        "needs_human_review": {"type": "boolean"},
+        "llm_provider": {"type": "string"},
+        "generated_at": {"type": "string", "format": "date-time"},
+        "generation_duration_ms": {"type": "integer"}
+      }
+    }
+  }
+}

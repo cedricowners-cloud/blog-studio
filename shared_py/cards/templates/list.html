@@ -1,0 +1,15 @@
+{% extends '_base.html' %}
+{% block card %}
+<div class="list">
+  {% if section_label %}<div class="content__section">{{ section_label }}</div>{% endif %}
+  <h2 class="list__heading">{{ heading | replace('\n', '<br>') | safe }}</h2>
+  <ol class="list__items">
+    {% for item in items %}
+    <li class="list__item">
+      <span class="list__number">{{ '%02d' % loop.index }}</span>
+      <span class="list__text">{{ item }}</span>
+    </li>
+    {% endfor %}
+  </ol>
+</div>
+{% endblock %}

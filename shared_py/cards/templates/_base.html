@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css" rel="stylesheet">
+<style>
+{% include '_styles.css.j2' %}
+</style>
+</head>
+<body>
+<div class="card card--{{ card_type }} mood--{{ mood }}">
+  <header class="card__header">
+    <div class="card__accent-bar"></div>
+    <span class="card__index">{{ '%02d' % card_index }} / {{ '%02d' % card_total }}</span>
+  </header>
+  <main class="card__body">
+    {% block card %}{% endblock %}
+  </main>
+  <footer class="card__footer">
+    <span class="card__brand">@{{ brand_name }}</span>
+  </footer>
+</div>
+</body>
+</html>
