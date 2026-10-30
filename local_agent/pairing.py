@@ -1,7 +1,7 @@
 """웹에서 발급한 Supabase refresh token을 받아 로컬에 암호화 저장.
 
 CLI 흐름:
-  1) 사용자가 웹 /settings 에서 "에이전트 페어링" → Supabase 세션 export
+  1) 사용자가 웹 /agent 에서 "페어링 값 보기" → Supabase 세션 export
   2) 여기에 JSON({access_token, refresh_token}) 혹은 refresh token만 붙여넣기
   3) passphrase 입력 → data/agent_auth.enc 저장
 """

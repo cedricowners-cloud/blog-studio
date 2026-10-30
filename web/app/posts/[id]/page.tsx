@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, ArrowRight, AlertTriangle, Clipboard } from "lucide-react";
 import { getBrowserSupabase } from "@/lib/supabase";
+import PublishPanel from "@/components/publish-panel";
 
 const HANDOFF_CARDS_KEY = "blog_studio:handoff_cards";
 const HANDOFF_IMAGES_KEY = "blog_studio:handoff_images";
@@ -36,6 +37,8 @@ interface PostDetail {
   search_intent: string | null;
   jtbd_type: string | null;
   positioning_attribute: string | null;
+  published_at: string | null;
+  naver_post_url: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -95,6 +98,30 @@ export default function PostDetailPage() {
     return () => {
       cancelled = true;
     };
+  }, [id]);
+
+  /**
+   * 발행 완료 후 published_at / naver_post_url 만 다시 읽는다.
+   * 전체를 재조회하면 편집 중인 제목·본문이 날아간다.
+   */
+  const refreshPublishState = useCallback(async () => {
+    if (!id) return;
+    const sb = getBrowserSupabase();
+    const { data } = await sb
+      .from("blog_posts")
+      .select("published_at, naver_post_url")
+      .eq("id", id)
+      .single();
+    if (!data) return;
+    setPost((prev) =>
+      prev
+        ? {
+            ...prev,
+            published_at: data.published_at as string | null,
+            naver_post_url: data.naver_post_url as string | null,
+          }
+        : prev,
+    );
   }, [id]);
 
   function markDirty() {
@@ -332,6 +359,18 @@ export default function PostDetailPage() {
             🗑 삭제
           </button>
         </section>
+
+        {/* 발행 — 편집창의 현재 값을 그대로 넘겨 저장 전 수정분도 반영된다 */}
+        <PublishPanel
+          postId={post.id}
+          title={editTitle}
+          body={editBody}
+          mainKeyword={post.main_keyword}
+          subKeywords={post.sub_keywords ?? []}
+          publishedAt={post.published_at}
+          naverPostUrl={post.naver_post_url}
+          onPublished={refreshPublishState}
+        />
 
         {/* 편집 영역 */}
         <section className="bg-white border rounded-lg p-4 space-y-3">

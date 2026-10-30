@@ -2,7 +2,6 @@ import ast
 import json
 import logging
 import re
-import pandas as pd
 from seleniumbase import Driver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
@@ -11,7 +10,7 @@ import time
 import os
 import platform
 import pyperclip
-from utils import wait_and_find_element, find_recent_file
+from .utils import wait_and_find_element, find_recent_file
 
 logger = logging.getLogger(__name__)
 
@@ -356,7 +355,7 @@ def write_blog_post(driver, title, content, keywords, template_index=None, stay_
         keywords: 태그 키워드 리스트
         template_index: 내 템플릿 적용 (0부터 시작, None이면 미적용)
     """
-    from naver_editor import write_formatted_content, apply_my_template
+    from .naver_editor import write_formatted_content, apply_my_template
 
     try:
         # 블로그 글쓰기 페이지로 이동 (이미 글쓰기 페이지면 스킵)
@@ -395,7 +394,7 @@ def write_blog_post(driver, title, content, keywords, template_index=None, stay_
 
         # 1) 내 템플릿 적용 (가장 먼저, 아무것도 입력 전에)
         if template_index is not None:
-            from naver_editor import _dismiss_all_popups
+            from .naver_editor import _dismiss_all_popups
             logger.info(f"내 템플릿 적용 중 (인덱스: {template_index})...")
             apply_my_template(driver, template_index)
             time.sleep(3)
@@ -525,6 +524,13 @@ def write_blog_post(driver, title, content, keywords, template_index=None, stay_
 # find_recent_file은 utils.py에서 import
 
 def main(keywords=None):
+    """레거시 Excel 일괄 작성 경로. 에이전트(worker)는 쓰지 않는다.
+
+    pandas/openpyxl 은 이 함수에서만 필요하므로 lazy import 한다 —
+    모듈 레벨에 두면 에이전트 전체가 pandas 설치를 강제하게 된다.
+    """
+    import pandas as pd
+
     try:
         # 키워드가 전달되지 않은 경우 Excel 파일에서 읽기
         if keywords is None:

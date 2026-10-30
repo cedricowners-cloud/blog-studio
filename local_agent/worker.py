@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import os
+import platform
 import threading
 import time
 from datetime import datetime, timezone
@@ -21,7 +22,10 @@ logger = logging.getLogger(__name__)
 
 load_dotenv()
 
-HANDLERS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
+LogFn = Callable[[str, str], None]
+
+# 핸들러는 (payload, on_log=...) 를 받아 결과 dict 를 돌려준다.
+HANDLERS: dict[str, Callable[..., dict[str, Any]]] = {
     "publish": publish.run,
     "neighbor_add": neighbor.run,
     "interact_like": interact.run,
@@ -59,12 +63,46 @@ def _get_supabase_client():
     return sb
 
 
+def _local_account_labels() -> list[str]:
+    """이 기기가 쿠키를 가진 계정 라벨 목록.
+
+    login_naver 는 ID/PW 가 아니라 data/cookies/naver_<라벨>.json 으로
+    로그인하므로, 쿠키 파일이 곧 "이 기기가 바로 처리할 수 있는 계정"이다.
+    AGENT_ACCOUNTS 환경변수(쉼표 구분)로 수동 지정도 가능.
+    """
+    override = os.getenv("AGENT_ACCOUNTS", "").strip()
+    if override:
+        return [a.strip() for a in override.split(",") if a.strip()]
+
+    from .lib.base_to_excel import COOKIE_DIR
+
+    try:
+        names = []
+        for fname in os.listdir(COOKIE_DIR):
+            if fname.startswith("naver_") and fname.endswith(".json"):
+                names.append(fname[len("naver_") : -len(".json")])
+        return sorted(names)
+    except FileNotFoundError:
+        return []
+
+
 class AgentWorker:
     def __init__(self):
         self.agent_id = get_or_create_agent_id()
         self.sb = _get_supabase_client()
+        self.user_id = self._resolve_user_id()
+        self.label = os.getenv("AGENT_LABEL") or platform.node() or "로컬 에이전트"
         self._stop = threading.Event()
         self._hb_thread: threading.Thread | None = None
+
+    def _resolve_user_id(self) -> str | None:
+        """하트비트의 소유자 식별용. 페어링이 사용자 토큰을 쓰므로 세션에서 얻는다."""
+        try:
+            resp = self.sb.auth.get_user()
+            return resp.user.id if resp and resp.user else None
+        except Exception:
+            logger.exception("user_id 조회 실패 — 하트비트가 웹에 안 보일 수 있음")
+            return None
 
     def start(self):
         logger.info("AgentWorker 시작 — agent_id=%s", self.agent_id)
@@ -90,9 +128,15 @@ class AgentWorker:
             self._stop.wait(HEARTBEAT_INTERVAL_SEC)
 
     def _send_heartbeat(self, status: str):
+        # user_id / accounts / label 은 웹이 "에이전트 연결됨"과 발행 가능
+        # 계정 목록을 보여주기 위해 필요하다. user_id 가 없으면 RLS
+        # (agent_heartbeat_user_*) 에 걸려 upsert 자체가 거부된다.
         self.sb.table("agent_heartbeat").upsert(
             {
                 "agent_id": self.agent_id,
+                "user_id": self.user_id,
+                "label": self.label,
+                "accounts": _local_account_labels(),
                 "last_seen": datetime.now(timezone.utc).isoformat(),
                 "status": status,
                 "version": "0.1.0",
@@ -150,7 +194,14 @@ class AgentWorker:
             return
 
         try:
-            result = handler(job["payload"] or {})
+            # 발행은 최소 15분 걸리므로 핸들러가 진행 상황을 job_logs 로
+            # 흘려보내야 웹에서 상태를 볼 수 있다.
+            result = handler(
+                job["payload"] or {},
+                on_log=lambda level, msg: self._log(job_id, level, msg),
+            )
+            if job_type == "publish":
+                self._after_publish(job, result)
             self._log(job_id, "info", "완료")
             self._complete(job_id, "completed", result=result)
         except Exception as e:
@@ -159,6 +210,51 @@ class AgentWorker:
             self._complete(job_id, "failed", error=str(e))
         finally:
             self._send_heartbeat("idle")
+
+    def _after_publish(self, job: dict[str, Any], result: dict[str, Any]):
+        """발행 성공 후 이력 기록 + 원본 글에 발행 상태 반영.
+
+        둘 다 실패해도 job 자체는 성공으로 남긴다 — 네이버에는 이미 올라갔고,
+        여기서 예외를 던지면 job 이 failed 로 뒤집혀 "실패했는데 글은 올라간"
+        더 나쁜 상태가 된다.
+        """
+        if not result.get("success"):
+            return
+
+        account = job.get("account_name")
+        payload = job.get("payload") or {}
+        post_url = result.get("post_url")
+        title = payload.get("title", "")
+        tags = payload.get("tags") or []
+        blog_post_id = job.get("blog_post_id") or payload.get("blog_post_id")
+
+        try:
+            self.sb.table("publish_history").insert(
+                {
+                    "blog_post_id": blog_post_id,
+                    "account_name": account,
+                    "title": title,
+                    "tags": tags,
+                    "status": "success",
+                    "naver_post_url": post_url,
+                }
+            ).execute()
+        except Exception:
+            logger.exception("publish_history 기록 실패 (발행 자체는 성공)")
+            self._log(job["id"], "warn", "발행 이력 기록 실패 — 발행은 완료됨")
+
+        if not blog_post_id:
+            return
+        try:
+            self.sb.table("blog_posts").update(
+                {
+                    "published_at": datetime.now(timezone.utc).isoformat(),
+                    "naver_post_url": post_url,
+                }
+            ).eq("id", blog_post_id).execute()
+        except Exception:
+            logger.exception("blog_posts 발행 상태 갱신 실패 (발행 자체는 성공)")
+            self._log(job["id"], "warn", "글 발행 상태 갱신 실패 — 발행은 완료됨")
 
     def _log(self, job_id: str, level: str, message: str):
         try:

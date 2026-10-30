@@ -13,6 +13,11 @@ seleniumbase = "^4.32.0"
 selenium = "^4.25.0"
 pyperclip = "^1.9.0"
 requests = "^2.32.0"
+# lib/blog_interact.py 가 사용 — 선언 누락되어 있었다
+beautifulsoup4 = "^4.12.0"
+# 주의: base_to_excel.main() 의 레거시 Excel 경로는 pandas/openpyxl 을
+# 요구하지만, 에이전트 실행 경로(login_naver / write_blog_post)에서는 쓰지
+# 않으므로 의존성에 넣지 않고 함수 안에서 lazy import 한다.
 pystray = "^0.19.5"
 pillow = "^11.0.0"
 cryptography = "^43.0.0"

@@ -17,6 +17,7 @@ const NAV_ITEMS = [
   { href: "/images", label: "이미지" },
   { href: "/domains", label: "도메인" },
   { href: "/stats", label: "통계" },
+  { href: "/agent", label: "발행" },
   { href: "/settings", label: "설정" },
 ];
 

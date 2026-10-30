@@ -37,18 +37,32 @@ pnpm dev  # → http://localhost:3000
 
 ## 4. 로컬 에이전트 실행 (Chrome 자동화 담당)
 
+네이버 발행은 Chrome 자동화가 필요해서 사용자 PC에서 돌아가는 에이전트가
+담당한다. 웹은 Supabase `jobs` 테이블에 작업을 넣고 진행 상황만 읽는다.
+
 ```bash
 cd local_agent
-poetry install
+python3 -m venv .venv
+./.venv/bin/pip install -r requirements.txt   # poetry 쓰면 `poetry install`
+
 # .env 편집: SUPABASE_URL / SUPABASE_ANON_KEY
-# 첫 실행: passphrase 설정
-poetry run python -m local_agent.main
-# 안내에 따라 끝나면 페어링:
-poetry run python -m local_agent.pairing
-# 웹 /settings 에서 페어링 토큰 받아 붙여넣기
-# 그 후 다시:
-poetry run python -m local_agent.main
+
+# 1) 웹 /agent 에서 "네이버 계정 등록" — 여기 등록한 이름으로만 발행 가능
+#    (RLS: jobs INSERT 는 account_name ∈ my_accounts() 를 요구)
+# 2) 웹 /agent 의 "페어링 값 보기" 로 세션 JSON 복사
+# 3) 페어링
+./.venv/bin/python -m local_agent.pairing
+# 4) 상시 실행
+./.venv/bin/python -m local_agent.main
 ```
+
+**첫 발행 시 수동 로그인이 필요하다.** `login_naver` 는 ID/PW 를 쓰지 않고
+`data/cookies/naver_<계정명>.json` 쿠키로 로그인한다. 쿠키가 없으면 브라우저
+창을 띄우고 180초 동안 사용자가 직접 로그인하기를 기다린 뒤 쿠키를 저장한다.
+이후 발행은 저장된 쿠키로 자동 진행된다.
+
+**발행 1건당 브라우저를 최소 15분 점유한다** (`stay_minutes` 기본값). 네이버
+차단 회피를 위한 체류 시간이며 웹 발행 패널에서 조정할 수 있다.
 
 ## 5. 마이그레이션 상태 확인 (선택)
 
@@ -64,7 +78,23 @@ supabase db push
 2. 웹 `/cards` → 카드뉴스 텍스트 편집
 3. 웹 `/keywords` → 관련 키워드 조회 → CSV 다운로드
 4. 웹 `/stats` → 최근 생성·공리 통과율 확인
-5. (추후 발행 UI) → Supabase `jobs` insert → 로컬 에이전트가 수신 → Chrome으로 실제 네이버 발행
+5. 웹 `/posts/<id>` → "네이버 블로그에 발행" → `jobs` insert → 로컬 에이전트가
+   수신 → Chrome으로 실제 발행 → `job_logs` 로 진행 상황이 웹에 표시됨
+
+### 발행 시 본문이 변환된다
+
+생성된 본문과 에디터가 해석하는 마크업이 완전히 같지 않아
+`web/lib/naver-markup.ts` 가 발행 직전에 보정한다. 발행 패널에 무엇이 바뀌는지
+경고로 표시된다.
+
+- `[IMG: 설명]` → **제거됨**. 에디터는 `[img]/로컬/경로.jpg[/img]` 형태의 실제
+  파일 경로만 받는데, 웹에서 고른 이미지는 URL뿐이라 에이전트 PC로 내려받는
+  단계가 아직 없다. 발행 후 네이버 에디터에서 직접 넣어야 한다.
+- 마크다운(`## 제목`, `**굵게**`) → `[h2]`, `[bold]` 로 변환. 글마다 포맷이
+  달라서(일부는 마크다운, 일부는 마크업) 양쪽을 모두 처리한다.
+- 닫히지 않은 `[h2]` → 줄 끝에서 자동으로 닫는다.
+- 마크다운 표(`| a | b |`) → 에디터에 표 서식이 없어 `|` 가 그대로 보인다.
+  경고만 띄우고 변환하지 않는다.
 
 ## 트러블슈팅
 

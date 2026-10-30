@@ -2,15 +2,21 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Callable
 
 from ..driver_pool import POOL
 from ..lib.blog_interact import process_neighbor_interaction
 
 logger = logging.getLogger(__name__)
 
+LogFn = Callable[[str, str], None]
 
-def run(payload: dict[str, Any]) -> dict[str, Any]:
+
+def _noop_log(level: str, message: str) -> None:
+    pass
+
+
+def run(payload: dict[str, Any], on_log: LogFn = _noop_log) -> dict[str, Any]:
     """payload = {account_name, max_pages, do_like, do_comment, comment_mode}"""
     account = payload.get("account_name")
     max_pages = int(payload.get("max_pages") or 3)

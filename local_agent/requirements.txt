@@ -1,0 +1,25 @@
+# 로컬 에이전트 의존성 (pip 경로)
+#
+# pyproject.toml 은 poetry 용이며 `package-mode = false` 라서
+# `pip install -e .` 가 metadata-generation-failed 로 실패한다.
+# poetry 없이 설치할 때는 이 파일을 쓴다:
+#
+#   python3 -m venv .venv
+#   ./.venv/bin/pip install -r requirements.txt
+#
+# 상한을 두지 않은 것은 의도적이다 — 최신 버전 조합으로 import 체인을
+# 실제 검증했다. 재현이 필요하면 `pip freeze > requirements.lock.txt`.
+
+python-dotenv>=1.0.0
+supabase>=2.9.0
+seleniumbase>=4.32.0
+selenium>=4.25.0
+pyperclip>=1.9.0
+requests>=2.32.0
+beautifulsoup4>=4.12.0
+cryptography>=43.0.0
+
+# 트레이 아이콘 (없으면 포어그라운드 모드로 자동 폴백)
+pystray>=0.19.5
+pillow>=11.0.0
+qrcode[pil]>=7.4.2
