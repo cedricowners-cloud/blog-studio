@@ -564,6 +564,18 @@ def write_blog_post(driver, title, content, keywords, template_index=None,
     return True
 
 
+# 네이버 에디터 클래스는 `save_btn__FuUyN` 처럼 접미 해시가 붙고 빌드마다
+# 바뀐다. 실측으로 확인된 변화:
+#   .save_btn__bzc5B    → save_btn__FuUyN
+#   .publish_btn__m9KHH → publish_btn__v_kS9
+# 그래서 정확 일치 대신 접두 부분일치로 찾는다. 해시가 또 바뀌어도 견딘다.
+# (`save_count_btn__` 은 `save_btn__` 을 포함하지 않으므로 오탐 없음)
+SEL_SAVE_BTN = '[class*="save_btn__"]'
+SEL_PUBLISH_BTN = '[class*="publish_btn__"]'
+SEL_TAG_INPUT = '[class*="tag_input__"]'
+SEL_LAYER = '[class*="layer_popup__"]'
+
+
 def _save_draft(driver, log):
     """임시저장 — 툴바의 '저장' 을 누른다. 공개되지 않는다.
 
@@ -574,10 +586,9 @@ def _save_draft(driver, log):
     log("info", "임시저장 시도 — 툴바의 '저장' 버튼을 찾습니다.")
     _log_clickables(driver, "툴바", log)
 
-    button = wait_and_find_element(driver, '.save_btn__bzc5B', timeout=5)
-    found_by = "클래스 .save_btn__bzc5B"
+    button = wait_and_find_element(driver, SEL_SAVE_BTN, timeout=5)
+    found_by = f"선택자 {SEL_SAVE_BTN}"
     if button is None:
-        # 해시 클래스는 빌드마다 바뀐다. 라벨로 다시 찾는다.
         button = find_clickable_by_text(driver, ['저장', '임시저장'])
         found_by = "텍스트 '저장'"
     if button is None:
@@ -594,19 +605,27 @@ def _save_draft(driver, log):
 def _publish(driver, keywords, log):
     """실제 발행 — 발행 레이어를 열고 태그를 넣은 뒤 확정 버튼을 누른다."""
     log("info", "발행 레이어 열기")
-    publish_button = wait_and_find_element(driver, '.publish_btn__m9KHH', timeout=5)
-    if publish_button is None:
-        publish_button = find_clickable_by_text(driver, ['발행'])
-    if publish_button is None:
+    toolbar_button = wait_and_find_element(driver, SEL_PUBLISH_BTN, timeout=5)
+    if toolbar_button is None:
+        toolbar_button = find_clickable_by_text(driver, ['발행'])
+    if toolbar_button is None:
         raise Exception("발행 버튼을 찾을 수 없습니다.")
-    publish_button.click()
+    toolbar_button.click()
     time.sleep(3)
 
-    layer = wait_and_find_element(driver, '.layer_popup__i0QOY', timeout=5)
+    layer = wait_and_find_element(driver, SEL_LAYER, timeout=5)
+    if layer is None:
+        # 레이어를 못 찾은 채 문서 전체에서 '발행' 을 찾으면 방금 누른
+        # 툴바 버튼을 다시 집어 레이어를 토글해버린다. 차라리 멈춘다.
+        _log_clickables(driver, "발행 레이어 탐색 실패", log)
+        raise Exception(
+            f"발행 설정 레이어({SEL_LAYER})를 찾을 수 없습니다. "
+            "위 버튼 목록으로 실제 클래스를 확인해 선택자를 갱신하세요."
+        )
     _log_clickables(driver, "발행 레이어", log, root=layer)
 
     # 태그 입력
-    tag_input = wait_and_find_element(driver, '.tag_input__rvUB5', timeout=5)
+    tag_input = wait_and_find_element(driver, SEL_TAG_INPUT, timeout=5)
     if tag_input is None:
         log("warn", "태그 입력란을 찾지 못했습니다 — 태그 없이 발행합니다.")
     elif keywords:
@@ -621,15 +640,22 @@ def _publish(driver, keywords, log):
                 tag_input.send_keys(Keys.SPACE)
                 time.sleep(0.3)
 
-    # 레이어 안의 발행 확정 버튼. 해시 클래스를 모르므로 라벨로 찾는다.
-    # 레이어를 닫고 '저장'을 누르면 임시저장이 되어버린다(기존 코드의 버그).
+    # 레이어 안의 발행 확정 버튼. 레이어 범위로 한정해서 찾는다.
+    # 레이어를 닫고 툴바 '저장'을 누르면 임시저장이 되어버린다(기존 코드).
     confirm = find_clickable_by_text(
         driver, ['발행', '발행하기'], root=layer, timeout=5
     )
     if confirm is None:
         raise Exception(
             "발행 레이어에서 확정 버튼을 찾을 수 없습니다. "
-            "임시저장 모드로 한 번 실행해 레이어 구조를 로그로 확인하세요."
+            "위 '발행 레이어' 버튼 목록을 보고 라벨을 확인하세요."
+        )
+    if confirm.id == toolbar_button.id:
+        # 레이어 안에서 찾았는데 툴바 버튼과 같다면 범위 한정이 깨진 것이다.
+        # 그대로 누르면 레이어만 닫히고 발행되지 않는다.
+        raise Exception(
+            "레이어 안의 확정 버튼이 툴바 버튼과 동일하게 잡혔습니다 — "
+            "레이어 선택자를 갱신해야 합니다."
         )
     label = (confirm.text or '').strip()
     cls = (confirm.get_attribute('class') or '')[:60]

@@ -31,6 +31,15 @@ logger = logging.getLogger("local_agent")
 
 
 def _ensure_passphrase():
+    """passphrase 가 필요한 경우에만 묻는다.
+
+    키체인에 세션이 있으면 TTY 입력이 전혀 필요 없다 — launchd 같은
+    백그라운드 실행이 가능해지는 지점이다.
+    """
+    if secrets.load_agent_auth_keychain():
+        logger.info("키체인에서 세션을 찾았습니다 — passphrase 입력 생략")
+        return
+
     # 첫 실행 여부 감지 — data/.salt 있으면 기존 사용자, 없으면 신규
     is_new = not secrets.SALT_PATH.exists()
     if is_new:

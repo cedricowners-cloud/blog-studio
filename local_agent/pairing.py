@@ -78,8 +78,16 @@ def _prompt_passphrase() -> str:
 
 def run_pair_cli() -> None:
     print("=== blog_studio Local Agent Pairing ===")
-    pw = _prompt_passphrase()
-    secrets.set_passphrase(pw)
+
+    # 키체인을 쓰면 passphrase 가 필요 없고, 그래야 launchd 로 상주시킬 수
+    # 있다(백그라운드에는 TTY 가 없어 getpass 가 불가능).
+    use_keychain = secrets.keychain_available()
+    if use_keychain:
+        print("저장 위치: OS 키체인 (passphrase 불필요, 백그라운드 실행 가능)")
+    else:
+        print("저장 위치: 암호화 파일 (keyring 미설치 — passphrase 필요)")
+        pw = _prompt_passphrase()
+        secrets.set_passphrase(pw)
 
     print(
         "\n웹 /agent 의 '페어링 값 보기' 에서 복사한 값을 붙여넣고 Enter:\n"
@@ -119,9 +127,21 @@ def run_pair_cli() -> None:
         print(f"refresh_token 이 너무 짧습니다 ({refresh_token!r}). 복사가 잘렸는지 확인하세요.")
         sys.exit(1)
 
-    secrets.save_agent_auth(refresh_token, access_token)
+    if use_keychain:
+        if not secrets.save_agent_auth_keychain(refresh_token, access_token):
+            print("키체인 저장에 실패했습니다. passphrase 방식으로 전환합니다.")
+            secrets.set_passphrase(_prompt_passphrase())
+            secrets.save_agent_auth(refresh_token, access_token)
+            where = "암호화 파일 (data/agent_auth.enc)"
+        else:
+            where = f"키체인 ({secrets.KEYRING_SERVICE})"
+    else:
+        secrets.save_agent_auth(refresh_token, access_token)
+        where = "암호화 파일 (data/agent_auth.enc)"
+
     agent_id = secrets.get_or_create_agent_id()
-    print(f"\n✓ 저장됨. agent_id = {agent_id}")
+    print(f"\n✓ 저장됨 — {where}")
+    print(f"  agent_id = {agent_id}")
     print("  이제 에이전트를 실행하세요:")
     print("    ./local_agent/agent")
 

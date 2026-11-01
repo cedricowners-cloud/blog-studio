@@ -42,19 +42,26 @@ pnpm dev  # → http://localhost:3000
 
 ```bash
 cd blog_studio
-python3 -m venv local_agent/.venv
-./local_agent/.venv/bin/pip install -r local_agent/requirements.txt
 
 # Supabase 접속 정보는 보통 따로 넣을 필요가 없다 (아래 "설정 탐색 순서" 참고)
 
 # 1) 웹 /agent 에서 "네이버 계정 등록" — 여기 등록한 이름으로만 발행 가능
 #    (RLS: jobs INSERT 는 account_name ∈ my_accounts() 를 요구)
 # 2) 웹 /agent 의 "페어링 값 보기" 로 세션 JSON 복사
-# 3) 페어링
+# 3) 페어링 (venv·의존성 자동 설치)
 ./local_agent/agent pair
-# 4) 상시 실행
+# 4) 포어그라운드 실행
 ./local_agent/agent
+
+# 5) (선택) 로그인 시 자동 시작되는 백그라운드 상주로 전환
+./local_agent/agent install
 ```
+
+포어그라운드 실행은 **터미널을 닫으면 종료된다.** 상주시키려면
+`agent install` 로 LaunchAgent 를 등록한다. 키체인에 세션이 있어야 하며
+(launchd 에는 TTY 가 없어 passphrase 를 물을 수 없다), 기존 passphrase
+페어링은 `agent migrate` 로 옮긴다. 자세한 내용은
+`local_agent/README.md` 참조.
 
 ### `agent` 래퍼를 쓰는 이유 (cwd 함정)
 

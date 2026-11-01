@@ -1,9 +1,15 @@
 #!/bin/sh
 # 에이전트 실행 래퍼 — 경로를 전혀 신경쓰지 않아도 된다.
 #
-#   ./agent pair        페어링
-#   ./agent             상시 실행
-#   ./agent --no-tray   포어그라운드 로그
+#   ./agent              포어그라운드 실행 (터미널 닫으면 종료)
+#   ./agent --no-tray    트레이 없이 로그만
+#   ./agent pair         페어링
+#   ./agent migrate      passphrase 파일 → OS 키체인 이전
+#
+#   ./agent install      launchd 상주 등록 (로그인 시 자동 시작)
+#   ./agent uninstall    상주 해제
+#   ./agent status       상주 상태 확인
+#   ./agent logs         상주 로그 따라가기
 #
 # 왜 필요한가: `python run.py` 는 인터프리터 경로와 스크립트 경로를 **둘 다**
 # 셸이 cwd 기준으로 해석한다. 그래서 어느 디렉토리에 있는지에 따라 접두사를
@@ -17,14 +23,110 @@
 set -e
 
 DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+REPO=$(CDPATH= cd -- "$DIR/.." && pwd)
 PY="$DIR/.venv/bin/python"
+LABEL="com.blogstudio.localagent"
+PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
+LOG_OUT="$DIR/data/agent.log"
+LOG_ERR="$DIR/data/agent.err.log"
 
-if [ ! -x "$PY" ]; then
-    echo "venv 가 없습니다 — $DIR/.venv 에 생성합니다."
-    python3 -m venv "$DIR/.venv"
-    "$DIR/.venv/bin/pip" install --quiet --upgrade pip
-    "$DIR/.venv/bin/pip" install --quiet -r "$DIR/requirements.txt"
-    echo "설치 완료."
-fi
+ensure_venv() {
+    if [ ! -x "$PY" ]; then
+        echo "venv 가 없습니다 — $DIR/.venv 에 생성합니다."
+        python3 -m venv "$DIR/.venv"
+        "$DIR/.venv/bin/pip" install --quiet --upgrade pip
+        "$DIR/.venv/bin/pip" install --quiet -r "$DIR/requirements.txt"
+        echo "설치 완료."
+    fi
+}
 
-exec "$PY" "$DIR/run.py" "$@"
+case "$1" in
+install)
+    ensure_venv
+    # 키체인에 세션이 없으면 백그라운드에서 passphrase 를 물을 수 없어
+    # 무한 재시작만 반복한다. 등록 전에 막는다.
+    if ! "$PY" -c "
+import sys; sys.path.insert(0, '$REPO')
+from local_agent import secrets
+sys.exit(0 if secrets.load_agent_auth_keychain() else 1)
+" 2>/dev/null; then
+        echo "키체인에 세션이 없습니다. 백그라운드 실행에는 키체인이 필요합니다"
+        echo "(launchd 에는 TTY 가 없어 passphrase 를 물을 수 없습니다)."
+        echo
+        echo "기존 페어링을 옮기려면:   $0 migrate"
+        echo "처음부터 페어링하려면:    $0 pair"
+        exit 1
+    fi
+
+    mkdir -p "$DIR/data" "$HOME/Library/LaunchAgents"
+    cat > "$PLIST" <<PLIST_EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>$LABEL</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>$PY</string>
+    <string>$DIR/run.py</string>
+    <string>--no-tray</string>
+  </array>
+  <key>WorkingDirectory</key><string>$REPO</string>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <!-- 인증 실패 등으로 즉시 종료될 때 재시작 폭주를 막는다 -->
+  <key>ThrottleInterval</key><integer>60</integer>
+  <key>StandardOutPath</key><string>$LOG_OUT</string>
+  <key>StandardErrorPath</key><string>$LOG_ERR</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <!-- launchd 는 PATH 가 비어 있다. Chrome/드라이버 탐색에 필요. -->
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+</dict>
+</plist>
+PLIST_EOF
+
+    launchctl unload "$PLIST" 2>/dev/null || true
+    launchctl load "$PLIST"
+    echo "✓ 등록됨: $PLIST"
+    echo "  로그인할 때마다 자동 시작되고, 종료되면 재시작됩니다."
+    echo "  상태: $0 status   로그: $0 logs"
+    ;;
+
+uninstall)
+    if [ -f "$PLIST" ]; then
+        launchctl unload "$PLIST" 2>/dev/null || true
+        rm -f "$PLIST"
+        echo "✓ 해제됨: $PLIST"
+    else
+        echo "등록되어 있지 않습니다."
+    fi
+    ;;
+
+status)
+    if [ ! -f "$PLIST" ]; then
+        echo "상주 등록: 안 됨 ($0 install 로 등록)"
+    else
+        echo "상주 등록: $PLIST"
+        # launchctl list 는 등록된 경우 PID/최근 종료코드를 보여준다.
+        launchctl list "$LABEL" 2>/dev/null \
+            | grep -E '"(PID|LastExitStatus)"' || echo "  (실행 중 아님)"
+    fi
+    [ -f "$LOG_ERR" ] && echo "--- 최근 오류 ---" && tail -5 "$LOG_ERR"
+    ;;
+
+logs)
+    mkdir -p "$DIR/data"
+    touch "$LOG_OUT" "$LOG_ERR"
+    echo "--- $LOG_OUT / $LOG_ERR (Ctrl-C 로 종료) ---"
+    tail -f "$LOG_OUT" "$LOG_ERR"
+    ;;
+
+*)
+    ensure_venv
+    exec "$PY" "$DIR/run.py" "$@"
+    ;;
+esac

@@ -29,12 +29,59 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 
+def _migrate_to_keychain() -> None:
+    """passphrase 로 암호화된 파일의 세션을 OS 키체인으로 옮긴다.
+
+    키체인에 있으면 TTY 입력이 필요 없어져 launchd 상주가 가능해진다.
+    기존 페어링을 그대로 쓰므로 웹에서 새 토큰을 받을 필요가 없다.
+    """
+    import getpass
+
+    from local_agent import secrets
+
+    if not secrets.keychain_available():
+        print("keyring 이 설치되지 않았습니다: pip install -r requirements.txt")
+        sys.exit(1)
+
+    if secrets.load_agent_auth_keychain():
+        print("이미 키체인에 세션이 있습니다 — 옮길 것이 없습니다.")
+        return
+
+    if not secrets.AGENT_AUTH_PATH.exists():
+        print("옮길 파일이 없습니다 (data/agent_auth.enc).")
+        print("처음부터 페어링하세요:  ./local_agent/agent pair")
+        sys.exit(1)
+
+    secrets.set_passphrase(getpass.getpass("기존 로컬 passphrase: "))
+    auth = secrets.load_agent_auth()
+    if not auth or not auth.get("refresh_token"):
+        print("복호화 실패 — passphrase 가 다릅니다.")
+        sys.exit(1)
+
+    if not secrets.save_agent_auth_keychain(
+        auth["refresh_token"], auth.get("access_token")
+    ):
+        print("키체인 저장 실패.")
+        sys.exit(1)
+
+    # 원본은 남겨둔다. 키체인을 우선 읽으므로 충돌하지 않고, 되돌릴 수 있다.
+    print(f"✓ 키체인으로 옮겼습니다 ({secrets.KEYRING_SERVICE})")
+    print("  이제 passphrase 없이 실행됩니다. 원본 파일은 그대로 두었습니다.")
+    print("  지우려면: rm local_agent/data/agent_auth.enc")
+
+
 def _main() -> None:
-    # 첫 인자가 pair 면 페어링 CLI, 나머지는 main 으로 그대로 넘긴다.
-    if len(sys.argv) > 1 and sys.argv[1] == "pair":
+    # 첫 인자로 서브커맨드, 나머지는 main 으로 그대로 넘긴다.
+    sub = sys.argv[1] if len(sys.argv) > 1 else ""
+
+    if sub == "pair":
         from local_agent.pairing import run_pair_cli
 
         run_pair_cli()
+        return
+
+    if sub == "migrate":
+        _migrate_to_keychain()
         return
 
     from local_agent.main import main

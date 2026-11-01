@@ -14,14 +14,38 @@
 `run.py` 를 쓴다. **어느 디렉토리에서 실행해도 된다.**
 
 ```bash
-cd blog_studio
-python3 -m venv local_agent/.venv
-./local_agent/.venv/bin/pip install -r local_agent/requirements.txt
-
-./local_agent/.venv/bin/python local_agent/run.py pair        # 최초 1회 페어링
-./local_agent/.venv/bin/python local_agent/run.py             # 상시 실행
-./local_agent/.venv/bin/python local_agent/run.py --no-tray   # 포어그라운드 로그
+./local_agent/agent pair        # 최초 1회 페어링 (venv·의존성 자동 설치)
+./local_agent/agent             # 포어그라운드 실행
+./local_agent/agent --no-tray   # 트레이 없이 로그만
 ```
+
+### 백그라운드 상주 (launchd)
+
+포어그라운드 실행은 터미널을 닫으면 종료된다. 로그인할 때 자동 시작되고
+죽으면 재시작되게 하려면:
+
+```bash
+./local_agent/agent migrate     # 기존 passphrase 페어링을 키체인으로 이전
+./local_agent/agent install     # LaunchAgent 등록
+./local_agent/agent status      # 등록·실행 상태 + 최근 오류
+./local_agent/agent logs        # 로그 따라가기
+./local_agent/agent uninstall   # 해제
+```
+
+**키체인이 필수다.** `launchd` 에는 TTY 가 없어 `getpass` 로 passphrase 를
+물을 수 없다. 그래서 세션을 OS 키체인에 두고(로그인 세션과 함께 해제됨)
+프롬프트를 없앤다. passphrase 를 plist 에 적는 것보다 안전하다.
+키체인에 세션이 없으면 `install` 이 등록을 거부한다 — 등록해두면 인증
+실패로 60초마다 재시작만 반복하기 때문이다.
+
+plist 는 `~/Library/LaunchAgents/com.blogstudio.localagent.plist` 에 생성되고
+로그는 `local_agent/data/agent.log` / `agent.err.log` 에 쌓인다.
+`PATH` 를 명시하는 이유는 launchd 환경이 비어 있어 Chrome·드라이버 탐색이
+실패하기 때문이다.
+
+LaunchAgent 는 사용자 GUI 세션에서 돌기 때문에 브라우저 창을 띄울 수 있다.
+다만 쿠키가 없을 때 뜨는 **180초 수동 로그인 창은 자리에 없으면 그냥
+만료된다** — 계정별 최초 로그인은 포어그라운드로 한 번 해두는 쪽이 낫다.
 
 `run.py` 없이 `-m local_agent.main` 을 쓰려면 **저장소 루트에서만** 된다.
 `local_agent/` 안에서 실행하면 `sys.path[0]` 이 `local_agent/` 가 되어 패키지를
@@ -52,9 +76,20 @@ python3 -m venv local_agent/.venv
   쓰이지 않는다. 실제로 쓰이는 건 `data/agent_auth.enc` (Supabase 토큰)뿐이다.
 
 **Supabase 인증**은 사용자 계정의 refresh token 을 쓴다. 웹 `/agent` 의
-"페어링 값 보기" 로 세션 JSON 을 복사해 `local_agent.pairing` 에 붙여넣으면
-passphrase 로 Fernet 암호화해서 `data/agent_auth.enc` 에 저장한다.
+"페어링 값 보기" 로 세션 JSON 을 복사해 `agent pair` 에 붙여넣는다.
 (QR 방식이 아니다 — `qrcode` 의존성은 현재 미사용.)
+
+저장 위치는 두 가지이고 **키체인을 먼저 읽는다**(`load_agent_auth_any`).
+
+| | OS 키체인 (권장) | 암호화 파일 |
+|---|---|---|
+| 위치 | `blog_studio.local_agent` 서비스 | `data/agent_auth.enc` |
+| 보호 | 로그인 키체인 | passphrase + Fernet(PBKDF2) |
+| 실행 시 입력 | 없음 | 매번 passphrase |
+| launchd 상주 | 가능 | **불가** (TTY 없음) |
+
+`keyring` 이 설치돼 있으면 `pair` 가 키체인에 저장한다. 기존 파일 페어링은
+`agent migrate` 로 옮긴다(원본은 남겨두므로 되돌릴 수 있다).
 
 따라서 에이전트는 **사용자 권한**으로 Supabase 에 접근한다. RLS 의
 `is_agent()` 전용 정책이 아니라 소유자 정책을 타며, 이 전제가 마이그레이션

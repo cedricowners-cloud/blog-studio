@@ -19,7 +19,7 @@ from typing import Any, Callable
 from dotenv import dotenv_values, load_dotenv
 
 from .handlers import interact, neighbor, publish
-from .secrets import AGENT_AUTH_PATH, get_or_create_agent_id, load_agent_auth
+from .secrets import get_or_create_agent_id, load_agent_auth_any
 
 logger = logging.getLogger(__name__)
 
@@ -120,22 +120,21 @@ def _get_supabase_client():
     url, anon = _resolve_supabase_config()
     sb = create_client(url, anon)
 
-    # load_agent_auth() 는 "파일 없음"과 "복호화 실패"를 모두 None 으로
-    # 돌려준다. 그대로 쓰면 passphrase 오타가 "페어링 안 됨"으로 보여서
-    # 멀쩡한 페어링을 다시 하게 만든다. 파일 존재 여부로 구분한다.
-    paired = AGENT_AUTH_PATH.exists()
-    auth = load_agent_auth()
+    # 키체인 → 암호화 파일 순으로 찾는다.
+    auth, source = load_agent_auth_any()
     if not auth or not auth.get("refresh_token"):
-        if paired:
+        if source == "file":
+            # load_agent_auth() 는 "파일 없음"과 "복호화 실패"를 모두 None 으로
+            # 돌려준다. 구분하지 않으면 passphrase 오타가 "페어링 안 됨"으로
+            # 보여서 멀쩡한 페어링을 다시 하게 만든다.
             raise AuthRequired(
                 "저장된 페어링 정보를 복호화할 수 없습니다 — passphrase 가 "
                 "다릅니다.\n"
-                "passphrase 를 잊었다면 data/ 를 지우고 처음부터 설정하세요:\n"
+                "passphrase 를 잊었다면 처음부터 설정하세요:\n"
                 "  rm -rf local_agent/data && ./local_agent/agent pair"
             )
-        raise AuthRequired(
-            f"아직 페어링하지 않았습니다 (data/agent_auth.enc 없음).\n{_REPAIR_HINT}"
-        )
+        raise AuthRequired(f"아직 페어링하지 않았습니다.\n{_REPAIR_HINT}")
+    logger.info("페어링 정보 출처: %s", source)
 
     try:
         sb.auth.set_session(
