@@ -10,7 +10,12 @@ import time
 import os
 import platform
 import pyperclip
-from .utils import wait_and_find_element, find_recent_file
+from .utils import (
+    describe_clickables,
+    find_clickable_by_text,
+    find_recent_file,
+    wait_and_find_element,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -399,17 +404,31 @@ def copy_paste_text(driver, element, text):
     
     time.sleep(0.5)
 
-def write_blog_post(driver, title, content, keywords, template_index=None, stay_minutes=15):
+def write_blog_post(driver, title, content, keywords, template_index=None,
+                    stay_minutes=15, save_as_draft=True, on_log=None):
     """블로그 글 작성 (서식 마크업 + 템플릿 지원)
 
     Args:
         driver: 로그인된 WebDriver
         title: 글 제목
         content: 본문 (마크업 태그 포함 가능)
-        keywords: 태그 키워드 리스트
+        keywords: 태그 키워드 리스트 (발행 모드에서만 적용됨)
         template_index: 내 템플릿 적용 (0부터 시작, None이면 미적용)
+        stay_minutes: 에디터 최소 체류 시간 (차단 회피)
+        save_as_draft: True면 임시저장(비공개), False면 실제 발행.
+            기본값을 임시저장으로 둔 이유 — 실수로 공개 발행되는 쪽이
+            되돌리기 어렵다. 공개는 호출자가 명시해야 한다.
+        on_log: (level, message) 콜백. job_logs 로 진행 상황을 흘려보낸다.
     """
     from .naver_editor import write_formatted_content, apply_my_template
+
+    def log(level, message):
+        getattr(logger, 'warning' if level == 'warn' else 'info')(message)
+        if on_log:
+            try:
+                on_log(level, message)
+            except Exception:
+                pass
 
     try:
         # 블로그 글쓰기 페이지로 이동 (이미 글쓰기 페이지면 스킵)
@@ -533,47 +552,104 @@ def write_blog_post(driver, title, content, keywords, template_index=None, stay_
                 logger.info(f"글 작성 완료. 최소 체류 시간까지 {remaining:.0f}초 대기 중...")
                 time.sleep(remaining)
 
-        # 발행 버튼 클릭
-        publish_button = wait_and_find_element(driver, '.publish_btn__m9KHH')
-        if publish_button:
-            publish_button.click()
-            time.sleep(3)
+        if save_as_draft:
+            _save_draft(driver, log)
         else:
-            raise Exception("발행 버튼을 찾을 수 없습니다.")
-
-        # 태그 입력
-        tag_input = wait_and_find_element(driver, '.tag_input__rvUB5')
-        if tag_input and keywords:
-            logger.info(f"태그 입력 중... ({len(keywords)}개)")
-            for tag in keywords[:30]:
-                clean_tag = re.sub(r'[^\w가-힣]', '', tag)
-                if clean_tag:
-                    tag_input.click()
-                    time.sleep(0.3)
-                    tag_input.send_keys(clean_tag)
-                    time.sleep(0.3)
-                    tag_input.send_keys(Keys.SPACE)
-                    time.sleep(0.3)
-
-        # 발행 팝업 닫기
-        close_button = wait_and_find_element(driver, '.layer_popup__i0QOY .btn_close__YxY9H')
-        if close_button:
-            close_button.click()
-            time.sleep(2)
-
-        # 저장 버튼 클릭
-        save_button = wait_and_find_element(driver, '.save_btn__bzc5B')
-        if save_button:
-            save_button.click()
-            time.sleep(3)
-        else:
-            raise Exception("저장 버튼을 찾을 수 없습니다.")
+            _publish(driver, keywords, log)
 
     except Exception as e:
         logger.error(f"블로그 작성 중 에러: {str(e)}")
         return False
 
     return True
+
+
+def _save_draft(driver, log):
+    """임시저장 — 툴바의 '저장' 을 누른다. 공개되지 않는다.
+
+    태그는 발행 설정 레이어에만 있어서 임시저장으로는 넣을 수 없다.
+    (기존 코드는 레이어를 열어 태그를 입력한 뒤 레이어를 닫고 저장을
+    눌렀는데, 닫는 순간 입력이 버려질 가능성이 커서 그 경로는 버렸다.)
+    """
+    log("info", "임시저장 시도 — 툴바의 '저장' 버튼을 찾습니다.")
+    _log_clickables(driver, "툴바", log)
+
+    button = wait_and_find_element(driver, '.save_btn__bzc5B', timeout=5)
+    found_by = "클래스 .save_btn__bzc5B"
+    if button is None:
+        # 해시 클래스는 빌드마다 바뀐다. 라벨로 다시 찾는다.
+        button = find_clickable_by_text(driver, ['저장', '임시저장'])
+        found_by = "텍스트 '저장'"
+    if button is None:
+        raise Exception("임시저장 버튼을 찾을 수 없습니다.")
+
+    label = (button.text or '').strip()
+    cls = (button.get_attribute('class') or '')[:60]
+    log("info", f"임시저장 버튼 클릭 ({found_by}) — 라벨={label!r} class={cls}")
+    button.click()
+    time.sleep(3)
+    log("info", "임시저장 완료 — 태그는 적용되지 않습니다(발행 시에만 가능).")
+
+
+def _publish(driver, keywords, log):
+    """실제 발행 — 발행 레이어를 열고 태그를 넣은 뒤 확정 버튼을 누른다."""
+    log("info", "발행 레이어 열기")
+    publish_button = wait_and_find_element(driver, '.publish_btn__m9KHH', timeout=5)
+    if publish_button is None:
+        publish_button = find_clickable_by_text(driver, ['발행'])
+    if publish_button is None:
+        raise Exception("발행 버튼을 찾을 수 없습니다.")
+    publish_button.click()
+    time.sleep(3)
+
+    layer = wait_and_find_element(driver, '.layer_popup__i0QOY', timeout=5)
+    _log_clickables(driver, "발행 레이어", log, root=layer)
+
+    # 태그 입력
+    tag_input = wait_and_find_element(driver, '.tag_input__rvUB5', timeout=5)
+    if tag_input is None:
+        log("warn", "태그 입력란을 찾지 못했습니다 — 태그 없이 발행합니다.")
+    elif keywords:
+        log("info", f"태그 {len(keywords[:30])}개 입력")
+        for tag in keywords[:30]:
+            clean_tag = re.sub(r'[^\w가-힣]', '', tag)
+            if clean_tag:
+                tag_input.click()
+                time.sleep(0.3)
+                tag_input.send_keys(clean_tag)
+                time.sleep(0.3)
+                tag_input.send_keys(Keys.SPACE)
+                time.sleep(0.3)
+
+    # 레이어 안의 발행 확정 버튼. 해시 클래스를 모르므로 라벨로 찾는다.
+    # 레이어를 닫고 '저장'을 누르면 임시저장이 되어버린다(기존 코드의 버그).
+    confirm = find_clickable_by_text(
+        driver, ['발행', '발행하기'], root=layer, timeout=5
+    )
+    if confirm is None:
+        raise Exception(
+            "발행 레이어에서 확정 버튼을 찾을 수 없습니다. "
+            "임시저장 모드로 한 번 실행해 레이어 구조를 로그로 확인하세요."
+        )
+    label = (confirm.text or '').strip()
+    cls = (confirm.get_attribute('class') or '')[:60]
+    log("info", f"발행 확정 클릭 — 라벨={label!r} class={cls}")
+    confirm.click()
+    time.sleep(5)
+    log("info", "발행 완료")
+
+
+def _log_clickables(driver, context, log, root=None):
+    """버튼 라벨·클래스를 로그에 남긴다.
+
+    해시 클래스의 실제 라벨을 모르는 상태라, 첫 실행 로그가 곧 DOM 조사
+    결과가 된다. 확정 후에는 지워도 된다.
+    """
+    items = describe_clickables(driver, root=root)
+    if items:
+        log("info", f"[{context}] 버튼 {len(items)}개: " + " | ".join(items))
+    else:
+        log("warn", f"[{context}] 버튼을 수집하지 못했습니다.")
 
 # find_recent_file은 utils.py에서 import
 

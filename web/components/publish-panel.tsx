@@ -51,6 +51,8 @@ export default function PublishPanel({
   const [tagText, setTagText] = useState("");
   const [stayMinutes, setStayMinutes] = useState(15);
   const [templateIndex, setTemplateIndex] = useState("");
+  // 기본값은 임시저장 — 공개 발행은 되돌리기 어렵다.
+  const [saveAsDraft, setSaveAsDraft] = useState(true);
   const [jobs, setJobs] = useState<PublishJob[]>([]);
   const [logs, setLogs] = useState<JobLog[]>([]);
   const [busy, setBusy] = useState(false);
@@ -145,11 +147,13 @@ export default function PublishPanel({
           tags,
           templateIndex: parsedTemplate,
           stayMinutes,
+          saveAsDraft,
         },
       );
       setNotice(
-        `발행 작업을 큐에 넣었습니다 (${conv.charCount}자). ` +
-          `에이전트가 집어가면 아래에 진행 상황이 표시됩니다.`,
+        `${saveAsDraft ? "임시저장" : "발행"} 작업을 큐에 넣었습니다 ` +
+          `(${conv.charCount}자). 에이전트가 집어가면 아래에 진행 상황이 ` +
+          `표시됩니다.`,
       );
       await refresh();
     } catch (e) {
@@ -254,6 +258,48 @@ export default function PublishPanel({
             </div>
           )}
 
+          {/* 모드 선택 — 공개 발행은 되돌리기 어려우므로 기본은 임시저장 */}
+          <fieldset className="border rounded p-3 space-y-2">
+            <legend className="text-xs text-neutral-600 px-1">모드</legend>
+            <label className="flex items-start gap-2 cursor-pointer">
+              <input
+                type="radio"
+                checked={saveAsDraft}
+                onChange={() => setSaveAsDraft(true)}
+                className="mt-1"
+              />
+              <span className="text-sm">
+                임시저장 <span className="text-neutral-500">(비공개)</span>
+                <span className="block text-[11px] text-neutral-500">
+                  네이버 글쓰기 &gt; 저장 목록에 들어갑니다. 공개되지 않아
+                  확인 후 직접 발행할 수 있습니다. 태그는 적용되지 않습니다 —
+                  네이버가 태그를 발행 설정 화면에서만 받습니다.
+                </span>
+              </span>
+            </label>
+            <label className="flex items-start gap-2 cursor-pointer">
+              <input
+                type="radio"
+                checked={!saveAsDraft}
+                onChange={() => setSaveAsDraft(false)}
+                className="mt-1"
+              />
+              <span className="text-sm">
+                바로 발행 <span className="text-red-700">(공개)</span>
+                <span className="block text-[11px] text-neutral-500">
+                  태그가 적용됩니다. 되돌리려면 네이버에서 직접 삭제해야
+                  합니다.
+                </span>
+              </span>
+            </label>
+            {!saveAsDraft && (
+              <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded p-2">
+                발행 모드는 아직 실제 검증을 거치지 않았습니다. 먼저
+                임시저장으로 한 번 돌려 결과를 확인하시는 쪽을 권합니다.
+              </p>
+            )}
+          </fieldset>
+
           {/* 입력 */}
           <div className="grid sm:grid-cols-2 gap-3">
             <label className="block">
@@ -290,7 +336,15 @@ export default function PublishPanel({
           </div>
 
           <label className="block">
-            <span className="text-xs text-neutral-600">태그 (쉼표 구분, 최대 30개)</span>
+            <span className="text-xs text-neutral-600">
+              태그 (쉼표 구분, 최대 30개)
+              {saveAsDraft && (
+                <span className="text-neutral-400">
+                  {" "}
+                  — 임시저장 모드에서는 적용되지 않습니다
+                </span>
+              )}
+            </span>
             <textarea
               value={tagText}
               onChange={(e) => setTagText(e.target.value)}
@@ -335,14 +389,18 @@ export default function PublishPanel({
               className="bg-[#03C75A] text-white text-sm rounded px-4 py-2 hover:brightness-95 disabled:opacity-40 inline-flex items-center gap-1.5"
             >
               <Send className="w-3.5 h-3.5" />
-              {busy ? "처리 중..." : "발행 작업 보내기"}
+              {busy
+                ? "처리 중..."
+                : saveAsDraft
+                  ? "임시저장 작업 보내기"
+                  : "발행 작업 보내기"}
             </button>
             {activeJob && (
               <span className="text-xs text-neutral-500">
                 진행 중인 작업이 끝나야 다시 보낼 수 있습니다.
               </span>
             )}
-            {publishedAt && (
+            {publishedAt && !saveAsDraft && (
               <span className="text-xs text-amber-700">
                 이미 발행된 글입니다 — 다시 보내면 새 글로 올라갑니다.
               </span>

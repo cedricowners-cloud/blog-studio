@@ -40,21 +40,24 @@ def _extract_post_url(driver) -> str | None:
 
 def run(payload: dict[str, Any], on_log: LogFn = _noop_log) -> dict[str, Any]:
     """payload = {account_name, title, body, tags, template_index?, stay_minutes?,
-    blog_post_id?}"""
+    save_as_draft?, blog_post_id?}"""
     account = payload.get("account_name")
     title = payload.get("title", "")
     body = payload.get("body", "")
     tags = payload.get("tags", []) or []
     template_index = payload.get("template_index")
     stay_minutes = int(payload.get("stay_minutes") or 15)
+    # 명시하지 않으면 임시저장. 실수로 공개되는 쪽이 되돌리기 어렵다.
+    save_as_draft = bool(payload.get("save_as_draft", True))
 
     if not account or not title or not body:
         raise ValueError("account_name, title, body 필수")
 
+    mode = "임시저장(비공개)" if save_as_draft else "발행(공개)"
     on_log(
         "info",
-        f"[{account}] 브라우저 준비 중 — 저장된 쿠키가 없으면 로그인 창이 "
-        f"열립니다(180초 내 직접 로그인 필요).",
+        f"[{account}] {mode} 모드. 브라우저 준비 중 — 저장된 쿠키가 없으면 "
+        f"로그인 창이 열립니다(180초 내 직접 로그인 필요).",
     )
 
     with POOL.acquire(account) as driver:
@@ -67,13 +70,30 @@ def run(payload: dict[str, Any], on_log: LogFn = _noop_log) -> dict[str, Any]:
             driver, title, body, tags,
             template_index=template_index,
             stay_minutes=stay_minutes,
+            save_as_draft=save_as_draft,
+            on_log=on_log,
         )
-        post_url = _extract_post_url(driver) if success else None
+        # 임시저장은 글 주소가 생기지 않는다. 에디터 URL 을 글 주소로
+        # 오인해 blog_posts 에 적지 않도록 발행 모드에서만 읽는다.
+        post_url = (
+            _extract_post_url(driver) if success and not save_as_draft else None
+        )
 
     if success:
-        on_log("info", f"발행 완료{f' — {post_url}' if post_url else ''}")
+        if save_as_draft:
+            on_log(
+                "info",
+                "임시저장 완료 — 네이버 블로그 글쓰기 > 저장 목록에서 확인하세요. "
+                "공개되지 않았습니다.",
+            )
+        else:
+            on_log("info", f"발행 완료{f' — {post_url}' if post_url else ''}")
     else:
         # write_blog_post 는 내부 예외를 삼키고 False 를 돌려준다.
-        on_log("error", "발행 실패 — 에디터 조작 중 문제가 발생했습니다.")
+        on_log("error", f"{mode} 실패 — 에디터 조작 중 문제가 발생했습니다.")
 
-    return {"success": bool(success), "post_url": post_url}
+    return {
+        "success": bool(success),
+        "post_url": post_url,
+        "saved_as_draft": save_as_draft,
+    }

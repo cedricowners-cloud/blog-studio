@@ -27,7 +27,11 @@ export interface PublishJob {
   agent_id: string | null;
   blog_post_id: string | null;
   payload: Record<string, unknown> | null;
-  result: { success?: boolean; post_url?: string | null } | null;
+  result: {
+    success?: boolean;
+    post_url?: string | null;
+    saved_as_draft?: boolean;
+  } | null;
   error_message: string | null;
   created_at: string;
   started_at: string | null;
@@ -144,6 +148,14 @@ export interface CreatePublishJobInput {
   templateIndex?: number | null;
   /** 에디터 체류 시간(분). 차단 회피용으로 기본 15분. */
   stayMinutes?: number;
+  /**
+   * true = 임시저장(비공개), false = 실제 발행(공개).
+   *
+   * 기본값이 임시저장인 이유: 공개 발행은 되돌리려면 네이버에서 직접
+   * 삭제해야 한다. 공개는 호출자가 명시적으로 선택해야 한다.
+   * 임시저장에는 태그를 넣을 수 없다(발행 설정 레이어에만 있음).
+   */
+  saveAsDraft?: boolean;
 }
 
 export interface CreatePublishJobResult {
@@ -191,6 +203,7 @@ export async function createPublishJob(
         tags,
         template_index: input.templateIndex ?? null,
         stay_minutes: input.stayMinutes ?? 15,
+        save_as_draft: input.saveAsDraft ?? true,
       },
     })
     .select("*")

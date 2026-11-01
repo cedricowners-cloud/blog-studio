@@ -364,6 +364,16 @@ class AgentWorker:
         if not result.get("success"):
             return
 
+        # 임시저장은 공개된 게 아니다. published_at 을 찍으면 웹에서
+        # "발행됨" 으로 보이고 publish_history 에도 발행 이력이 남는다.
+        if result.get("saved_as_draft"):
+            self._log(
+                job["id"],
+                "info",
+                "임시저장이므로 발행 이력·발행 상태는 기록하지 않습니다.",
+            )
+            return
+
         account = job.get("account_name")
         payload = job.get("payload") or {}
         post_url = result.get("post_url")
