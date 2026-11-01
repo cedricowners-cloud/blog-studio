@@ -45,7 +45,7 @@ cd local_agent
 python3 -m venv .venv
 ./.venv/bin/pip install -r requirements.txt   # poetry 쓰면 `poetry install`
 
-# .env 편집: SUPABASE_URL / SUPABASE_ANON_KEY
+# Supabase 접속 정보는 보통 따로 넣을 필요가 없다 (아래 "설정 탐색 순서" 참고)
 
 # 1) 웹 /agent 에서 "네이버 계정 등록" — 여기 등록한 이름으로만 발행 가능
 #    (RLS: jobs INSERT 는 account_name ∈ my_accounts() 를 요구)
@@ -55,6 +55,21 @@ python3 -m venv .venv
 # 4) 상시 실행
 ./.venv/bin/python -m local_agent.main
 ```
+
+### 설정 탐색 순서 (Supabase URL / anon key)
+
+같은 값이 저장소 안에 이미 여러 이름으로 들어 있어서, 또 적지 않도록
+에이전트가 아래 순서로 찾는다 (`local_agent/worker.py:_resolve_supabase_config`).
+
+1. 환경변수 `SUPABASE_URL` / `SUPABASE_ANON_KEY`
+2. 환경변수 `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+3. 파일 순서: `blog_studio/.env` → `web/.env.local` → `content_service/.env`
+   (각 파일에서 위 네 이름을 모두 확인)
+
+anon key 는 설계상 공개 키라(브라우저 번들에 그대로 실린다) 이렇게 공유해도
+노출 위험이 늘지 않는다. 다만 **필요한 두 값만 골라 읽는다** —
+파일 전체를 환경에 올리면 `SUPABASE_SERVICE_ROLE_KEY` 같은 무관한 비밀이
+에이전트 프로세스로 끌려 들어온다.
 
 **첫 발행 시 수동 로그인이 필요하다.** `login_naver` 는 ID/PW 를 쓰지 않고
 `data/cookies/naver_<계정명>.json` 쿠키로 로그인한다. 쿠키가 없으면 브라우저

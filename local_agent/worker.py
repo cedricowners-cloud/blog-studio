@@ -11,9 +11,10 @@ import platform
 import threading
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Callable
 
-from dotenv import load_dotenv
+from dotenv import dotenv_values, load_dotenv
 
 from .handlers import interact, neighbor, publish
 from .secrets import get_or_create_agent_id, load_agent_auth
@@ -36,14 +37,69 @@ POLL_INTERVAL_SEC = int(os.getenv("AGENT_POLL_INTERVAL", "3"))
 HEARTBEAT_INTERVAL_SEC = int(os.getenv("AGENT_HEARTBEAT_INTERVAL", "30"))
 
 
+# 같은 저장소 안에 이미 동일한 값이 다른 이름으로 들어있다.
+# 사용자가 같은 값을 또 적게 만들지 않도록 아래 순서로 찾는다.
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+_FALLBACK_ENV_FILES = (
+    _REPO_ROOT / ".env",
+    _REPO_ROOT / "web" / ".env.local",
+    _REPO_ROOT / "content_service" / ".env",
+)
+_URL_NAMES = ("SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_URL")
+_ANON_NAMES = ("SUPABASE_ANON_KEY", "NEXT_PUBLIC_SUPABASE_ANON_KEY")
+
+
+def _resolve_supabase_config() -> tuple[str, str]:
+    """URL + anon key 를 여러 이름·위치에서 찾는다.
+
+    환경변수(또는 local_agent/.env)가 우선이고, 없으면 저장소 안의 다른
+    .env 파일을 뒤진다. anon key 는 설계상 공개 키라(브라우저 번들에
+    그대로 실린다) 이렇게 공유해도 노출 위험이 늘지 않는다.
+
+    주의: 필요한 두 값만 골라 읽는다. 파일 전체를 os.environ 에 올리면
+    SUPABASE_SERVICE_ROLE_KEY 같은 무관한 비밀까지 에이전트 프로세스로
+    끌려 들어온다.
+    """
+
+    def pick(names: tuple[str, ...], source) -> str | None:
+        for n in names:
+            v = source(n)
+            if v:
+                return v
+        return None
+
+    url = pick(_URL_NAMES, os.getenv)
+    anon = pick(_ANON_NAMES, os.getenv)
+
+    for path in _FALLBACK_ENV_FILES:
+        if url and anon:
+            break
+        if not path.is_file():
+            continue
+        values = dotenv_values(path)
+        url = url or pick(_URL_NAMES, values.get)
+        anon = anon or pick(_ANON_NAMES, values.get)
+        logger.debug("%s 에서 Supabase 설정 보충", path)
+
+    if not url or not anon:
+        missing = []
+        if not url:
+            missing.append("SUPABASE_URL")
+        if not anon:
+            missing.append("SUPABASE_ANON_KEY")
+        raise RuntimeError(
+            f"{' / '.join(missing)} 를 찾을 수 없습니다. "
+            f"local_agent/.env 에 넣거나 환경변수로 지정하세요. "
+            f"(탐색한 파일: {', '.join(str(p) for p in _FALLBACK_ENV_FILES)})"
+        )
+    return url, anon
+
+
 def _get_supabase_client():
     """사용자 refresh token 기반으로 auth 세션 부착된 클라이언트 반환."""
     from supabase import create_client
 
-    url = os.getenv("SUPABASE_URL")
-    anon = os.getenv("SUPABASE_ANON_KEY")
-    if not url or not anon:
-        raise RuntimeError("SUPABASE_URL / SUPABASE_ANON_KEY 환경변수가 비어있습니다.")
+    url, anon = _resolve_supabase_config()
 
     sb = create_client(url, anon)
 

@@ -325,7 +325,12 @@ python3 -m venv .venv
           </pre>
         </li>
         <li>
-          <code>local_agent/.env</code> 에 Supabase 접속 정보 입력:
+          <span className="text-neutral-500">
+            (보통 건너뛰어도 됩니다) 에이전트는 저장소의 <code>.env</code>,{" "}
+            <code>web/.env.local</code>, <code>content_service/.env</code> 에서
+            Supabase URL·anon 키를 자동으로 찾습니다. 못 찾을 때만{" "}
+            <code>local_agent/.env</code> 에 직접 넣으세요:
+          </span>
           <pre className="mt-1 bg-neutral-50 border rounded p-2 text-xs overflow-x-auto">
 {`SUPABASE_URL=${process.env.NEXT_PUBLIC_SUPABASE_URL ?? "<프로젝트 URL>"}
 SUPABASE_ANON_KEY=<anon key>`}
