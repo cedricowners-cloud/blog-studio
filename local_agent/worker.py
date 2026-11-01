@@ -8,6 +8,8 @@ from __future__ import annotations
 import logging
 import os
 import platform
+import subprocess
+import sys
 import threading
 import time
 from datetime import datetime, timezone
@@ -177,6 +179,44 @@ def _local_account_labels() -> list[str]:
         return []
 
 
+def ensure_webdriver() -> None:
+    """uc_driver 를 미리 내려받아 둔다.
+
+    seleniumbase 는 드라이버가 없으면 Driver() 호출 시점에 다운로드하는데,
+    그 다운로드가 끝나는 동안 띄운 Chrome 세션이 깨진다. 최초 발행이
+
+      Warning: uc_driver not found. Getting it now: ...
+      → no such window: target window already closed
+
+    로 실패했던 원인이다. 작업을 받기 전에 끝내둔다.
+    """
+    import seleniumbase
+
+    driver_path = (
+        Path(seleniumbase.__file__).parent / "drivers" / "uc_driver"
+    )
+    if driver_path.exists():
+        return
+
+    logger.info("uc_driver 가 없습니다 — 작업 수신 전에 미리 설치합니다.")
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-m", "seleniumbase", "get", "uc_driver"],
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+        if driver_path.exists():
+            logger.info("uc_driver 설치 완료")
+        else:
+            logger.warning(
+                "uc_driver 선행 설치 실패 — 첫 발행이 실패할 수 있습니다. %s",
+                (proc.stderr or proc.stdout or "").strip()[:200],
+            )
+    except Exception:
+        logger.exception("uc_driver 선행 설치 중 오류 — 첫 발행이 실패할 수 있습니다.")
+
+
 class AgentWorker:
     def __init__(self):
         self.agent_id = get_or_create_agent_id()
@@ -207,6 +247,8 @@ class AgentWorker:
 
     def start(self):
         logger.info("AgentWorker 시작 — agent_id=%s", self.agent_id)
+        # 작업을 받기 전에 끝내둬야 첫 발행이 다운로드와 경쟁하지 않는다.
+        ensure_webdriver()
         self._hb_thread = threading.Thread(target=self._heartbeat_loop, daemon=True)
         self._hb_thread.start()
 

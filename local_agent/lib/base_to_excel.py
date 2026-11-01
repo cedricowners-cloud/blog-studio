@@ -29,22 +29,33 @@ COOKIE_FILE = _cookie_path("기본")
 
 
 def _detect_chrome_version():
-    """설치된 Chrome 브라우저의 메이저 버전을 자동 감지"""
+    """설치된 Chrome 브라우저의 메이저 버전을 자동 감지 (로그용).
+
+    반환값은 로깅에만 쓰이며 드라이버 선택에는 영향이 없다 — seleniumbase 가
+    자체적으로 auto-detect 한다.
+
+    timeout 이 15초인 이유: 5초였을 때 콜드 스타트(Gatekeeper 검증 등)로
+    실제 타임아웃이 발생했고, 그 경고가 "버전 불일치" 로 오진을 유도했다.
+    """
     import subprocess
     import re
+    timeout = 15
     try:
         if platform.system() == "Darwin":
             result = subprocess.run(
                 ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', '--version'],
-                capture_output=True, text=True, timeout=5
+                capture_output=True, text=True, timeout=timeout
             )
         elif platform.system() == "Windows":
             result = subprocess.run(
                 ['reg', 'query', r'HKEY_CURRENT_USER\Software\Google\Chrome\BLBeacon', '/v', 'version'],
-                capture_output=True, text=True, timeout=5
+                capture_output=True, text=True, timeout=timeout
             )
         else:
-            result = subprocess.run(['google-chrome', '--version'], capture_output=True, text=True, timeout=5)
+            result = subprocess.run(
+                ['google-chrome', '--version'],
+                capture_output=True, text=True, timeout=timeout
+            )
 
         match = re.search(r'(\d+)\.\d+\.\d+', result.stdout)
         if match:
@@ -89,7 +100,8 @@ def _create_driver(headless=False, mobile=False):
     if chrome_ver:
         logger.info(f"감지된 Chrome 메이저 버전: {chrome_ver}")
     else:
-        logger.warning("Chrome 버전 감지 실패 — seleniumbase auto-detect에 위임")
+        # 드라이버 선택에는 영향 없다. 실패 원인으로 오해하지 않도록 info 로 둔다.
+        logger.info("Chrome 버전 감지 생략 (로그용 값) — seleniumbase auto-detect 사용")
 
     mobile_ua = (
         'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) '
@@ -176,16 +188,58 @@ def _load_cookies(driver, account_name="기본"):
 
 
 
+# 브라우저 창/세션이 죽었을 때의 메시지들. UC 모드에서 드라이버를 막
+# 내려받은 직후 등 첫 네비게이션이 통째로 실패하는 경우가 있다.
+_DEAD_WINDOW_MARKERS = (
+    'no such window',
+    'web view not found',
+    'target window already closed',
+    'invalid session id',
+    'disconnected',
+)
+
+
+def _create_driver_and_open(url, headless=False, mobile=False, attempts=2):
+    """드라이버 생성 + 첫 페이지 열기를 한 단위로 재시도한다.
+
+    _create_driver 자체에도 재시도가 있지만, 생성은 성공하고 바로 다음
+    driver.get() 에서 창이 죽는 경우를 못 잡는다(최초 uc_driver 다운로드
+    직후에 관측됨). 사용자 상호작용 전 단계라 재시도가 안전하다.
+    """
+    last_err = None
+    for i in range(attempts):
+        driver = _create_driver(headless=headless, mobile=mobile)
+        try:
+            driver.get(url)
+            return driver
+        except Exception as e:
+            last_err = e
+            try:
+                driver.quit()
+            except Exception:
+                pass
+            if not any(m in str(e).lower() for m in _DEAD_WINDOW_MARKERS):
+                raise
+            logger.warning(
+                "첫 페이지 열기 실패 — 브라우저 창이 닫혔습니다 (%d/%d): %s",
+                i + 1, attempts, str(e).splitlines()[0],
+            )
+            time.sleep(2)
+    raise RuntimeError(f"브라우저 창이 반복해서 닫힙니다: {last_err}")
+
+
 def login_naver_manual(account_name="기본"):
     """수동 로그인: 브라우저를 열고 사용자가 직접 로그인 → 계정별 쿠키 저장
 
     Returns:
         driver: 로그인된 드라이버, 실패 시 None
     """
-    driver = _create_driver(headless=False)  # 수동 로그인은 항상 화면 표시
+    # 수동 로그인은 항상 화면 표시
+    driver = _create_driver_and_open(
+        'https://nid.naver.com/nidlogin.login', headless=False
+    )
 
     try:
-        driver.get('https://nid.naver.com/nidlogin.login')
         logger.info(f"수동 로그인 대기 중 (계정: {account_name})...")
 
         # 최대 180초 대기하면서 로그인 완료 감지
