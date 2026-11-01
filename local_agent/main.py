@@ -21,7 +21,7 @@ from pathlib import Path
 
 from . import secrets
 from .driver_pool import POOL
-from .worker import AgentWorker
+from .worker import AgentWorker, AuthRequired
 
 logging.basicConfig(
     level=logging.INFO,
@@ -50,11 +50,21 @@ def _ensure_passphrase():
     else:
         pw = getpass.getpass("로컬 passphrase: ")
         secrets.set_passphrase(pw)
+        # load_agent_auth() 는 "파일 없음"과 "복호화 실패"를 모두 None 으로
+        # 돌려준다. 구분하지 않으면 passphrase 오타가 "페어링 안 됨"으로
+        # 보여서 멀쩡한 페어링을 다시 하게 만든다.
         if secrets.load_agent_auth() is None:
-            print(
-                "페어링 정보 없음 — 먼저 실행하세요:\n"
-                "  ./local_agent/agent pair"
-            )
+            if secrets.AGENT_AUTH_PATH.exists():
+                print(
+                    "저장된 페어링 정보를 복호화할 수 없습니다 — passphrase 가 다릅니다.\n"
+                    "passphrase 를 잊었다면 처음부터 설정하세요:\n"
+                    "  rm -rf local_agent/data && ./local_agent/agent pair"
+                )
+            else:
+                print(
+                    "아직 페어링하지 않았습니다 — 먼저 실행하세요:\n"
+                    "  ./local_agent/agent pair"
+                )
             sys.exit(1)
 
 
@@ -103,7 +113,13 @@ def main():
     args = parser.parse_args()
 
     _ensure_passphrase()
-    worker = AgentWorker()
+
+    try:
+        worker = AgentWorker()
+    except AuthRequired as e:
+        # 스택트레이스 대신 해야 할 일만 보여준다.
+        print(f"\n인증 실패 — 에이전트를 시작하지 않습니다.\n\n{e}\n", file=sys.stderr)
+        sys.exit(1)
 
     if args.no_tray:
         try:

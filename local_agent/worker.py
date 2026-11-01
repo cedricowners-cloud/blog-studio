@@ -17,7 +17,7 @@ from typing import Any, Callable
 from dotenv import dotenv_values, load_dotenv
 
 from .handlers import interact, neighbor, publish
-from .secrets import get_or_create_agent_id, load_agent_auth
+from .secrets import AGENT_AUTH_PATH, get_or_create_agent_id, load_agent_auth
 
 logger = logging.getLogger(__name__)
 
@@ -95,27 +95,62 @@ def _resolve_supabase_config() -> tuple[str, str]:
     return url, anon
 
 
+class AuthRequired(RuntimeError):
+    """페어링이 없거나 만료돼 Supabase 세션을 붙일 수 없음."""
+
+
+_REPAIR_HINT = (
+    "웹 /agent 에서 '페어링 값 보기' 로 새 값을 받아 다시 페어링하세요:\n"
+    "  ./local_agent/agent pair"
+)
+
+
 def _get_supabase_client():
-    """사용자 refresh token 기반으로 auth 세션 부착된 클라이언트 반환."""
+    """사용자 refresh token 으로 세션을 붙인 클라이언트 반환.
+
+    세션 부착에 실패하면 **반드시 예외를 던진다.** 과거엔 경고만 찍고
+    익명 클라이언트를 돌려줬는데, 그러면 jobs 폴링이 RLS 때문에 빈 결과를
+    HTTP 200 으로 받아서 "작업이 없는 정상 상태"와 구분되지 않는다.
+    에이전트는 영원히 아무 일도 안 하면서 살아있는 것처럼 보인다.
+    """
     from supabase import create_client
 
     url, anon = _resolve_supabase_config()
-
     sb = create_client(url, anon)
 
+    # load_agent_auth() 는 "파일 없음"과 "복호화 실패"를 모두 None 으로
+    # 돌려준다. 그대로 쓰면 passphrase 오타가 "페어링 안 됨"으로 보여서
+    # 멀쩡한 페어링을 다시 하게 만든다. 파일 존재 여부로 구분한다.
+    paired = AGENT_AUTH_PATH.exists()
     auth = load_agent_auth()
-    if auth and auth.get("refresh_token"):
-        try:
-            sb.auth.set_session(
-                access_token=auth.get("access_token") or "",
-                refresh_token=auth["refresh_token"],
+    if not auth or not auth.get("refresh_token"):
+        if paired:
+            raise AuthRequired(
+                "저장된 페어링 정보를 복호화할 수 없습니다 — passphrase 가 "
+                "다릅니다.\n"
+                "passphrase 를 잊었다면 data/ 를 지우고 처음부터 설정하세요:\n"
+                "  rm -rf local_agent/data && ./local_agent/agent pair"
             )
-        except Exception as e:
-            logger.warning("set_session 실패 — refresh 시도: %s", e)
-            try:
-                sb.auth.refresh_session(auth["refresh_token"])
-            except Exception:
-                logger.exception("refresh_session 도 실패 — QR 페어링 필요")
+        raise AuthRequired(
+            f"아직 페어링하지 않았습니다 (data/agent_auth.enc 없음).\n{_REPAIR_HINT}"
+        )
+
+    try:
+        sb.auth.set_session(
+            access_token=auth.get("access_token") or "",
+            refresh_token=auth["refresh_token"],
+        )
+    except Exception as e:
+        # access_token 이 만료됐으면 set_session 이 실패하는 게 정상이다.
+        logger.info("저장된 access_token 사용 불가 — refresh 시도 (%s)", e)
+        try:
+            sb.auth.refresh_session(auth["refresh_token"])
+        except Exception as e2:
+            raise AuthRequired(
+                f"저장된 페어링 값으로 로그인할 수 없습니다: {e2}\n"
+                f"세션이 만료됐거나 폐기된 경우입니다.\n{_REPAIR_HINT}"
+            ) from e2
+
     return sb
 
 
@@ -151,14 +186,24 @@ class AgentWorker:
         self._stop = threading.Event()
         self._hb_thread: threading.Thread | None = None
 
-    def _resolve_user_id(self) -> str | None:
-        """하트비트의 소유자 식별용. 페어링이 사용자 토큰을 쓰므로 세션에서 얻는다."""
+    def _resolve_user_id(self) -> str:
+        """세션 실사용 검증 + 하트비트 소유자 식별.
+
+        set_session 이 통과해도 토큰이 실제로 유효하다는 보장은 없으므로
+        여기서 한 번 서버에 물어본다. user_id 는 agent_heartbeat RLS 가
+        요구하는 값이라, None 이면 하트비트가 영구히 42501 로 실패한다.
+        그래서 경고가 아니라 중단으로 처리한다.
+        """
         try:
             resp = self.sb.auth.get_user()
-            return resp.user.id if resp and resp.user else None
-        except Exception:
-            logger.exception("user_id 조회 실패 — 하트비트가 웹에 안 보일 수 있음")
-            return None
+        except Exception as e:
+            raise AuthRequired(
+                f"세션 확인 실패: {e}\n{_REPAIR_HINT}"
+            ) from e
+        if not resp or not resp.user:
+            raise AuthRequired(f"세션에 사용자 정보가 없습니다.\n{_REPAIR_HINT}")
+        logger.info("Supabase 인증 확인 — user=%s", resp.user.email or resp.user.id)
+        return resp.user.id
 
     def start(self):
         logger.info("AgentWorker 시작 — agent_id=%s", self.agent_id)
