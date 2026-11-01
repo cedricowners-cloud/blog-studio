@@ -317,38 +317,20 @@ function PairingCard() {
     >
       <ol className="text-sm space-y-2 list-decimal list-inside text-neutral-700">
         <li>
-          PC에서 의존성 설치 (저장소 루트에서):
+          아래 <b>페어링 값</b>을 복사한 뒤, PC에서 다음을 실행하고 붙여넣기:
           <pre className="mt-1 bg-neutral-50 border rounded p-2 text-xs overflow-x-auto">
-{`cd blog_studio
-python3 -m venv local_agent/.venv
-./local_agent/.venv/bin/pip install -r local_agent/requirements.txt`}
-          </pre>
-        </li>
-        <li>
-          <span className="text-neutral-500">
-            (보통 건너뛰어도 됩니다) 에이전트는 저장소의 <code>.env</code>,{" "}
-            <code>web/.env.local</code>, <code>content_service/.env</code> 에서
-            Supabase URL·anon 키를 자동으로 찾습니다. 못 찾을 때만{" "}
-            <code>local_agent/.env</code> 에 직접 넣으세요:
-          </span>
-          <pre className="mt-1 bg-neutral-50 border rounded p-2 text-xs overflow-x-auto">
-{`SUPABASE_URL=${process.env.NEXT_PUBLIC_SUPABASE_URL ?? "<프로젝트 URL>"}
-SUPABASE_ANON_KEY=<anon key>`}
-          </pre>
-        </li>
-        <li>
-          아래 페어링 값을 복사해서 실행 후 붙여넣기:
-          <pre className="mt-1 bg-neutral-50 border rounded p-2 text-xs overflow-x-auto">
-{`./local_agent/.venv/bin/python local_agent/run.py pair`}
+{`cd blog_studio && ./local_agent/agent pair`}
           </pre>
           <span className="text-neutral-500">
-            <code>run.py</code> 는 어느 디렉토리에서 실행해도 됩니다.
+            첫 실행이면 venv 생성·의존성 설치까지 자동으로 합니다.{" "}
+            <code>local_agent</code> 안에 있다면 <code>./agent pair</code> 로도
+            됩니다 — <code>agent</code> 는 호출 위치와 무관합니다.
           </span>
         </li>
         <li>
           상시 실행:
           <pre className="mt-1 bg-neutral-50 border rounded p-2 text-xs overflow-x-auto">
-{`./local_agent/.venv/bin/python local_agent/run.py`}
+{`cd blog_studio && ./local_agent/agent`}
           </pre>
         </li>
         <li className="text-amber-800">

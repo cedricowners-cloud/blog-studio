@@ -1,0 +1,30 @@
+#!/bin/sh
+# 에이전트 실행 래퍼 — 경로를 전혀 신경쓰지 않아도 된다.
+#
+#   ./agent pair        페어링
+#   ./agent             상시 실행
+#   ./agent --no-tray   포어그라운드 로그
+#
+# 왜 필요한가: `python run.py` 는 인터프리터 경로와 스크립트 경로를 **둘 다**
+# 셸이 cwd 기준으로 해석한다. 그래서 어느 디렉토리에 있는지에 따라 접두사를
+# 붙여야/떼야 하고, 섞이면 아래처럼 실패한다.
+#
+#   local_agent/local_agent/run.py: No such file or directory
+#   ./local_agent/.venv/bin/python: no such file or directory
+#
+# 이 스크립트는 자기 위치($0)를 기준으로 venv 와 run.py 를 찾으므로
+# 호출 위치와 무관하다. venv 가 없으면 만들고 의존성까지 깔아준다.
+set -e
+
+DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+PY="$DIR/.venv/bin/python"
+
+if [ ! -x "$PY" ]; then
+    echo "venv 가 없습니다 — $DIR/.venv 에 생성합니다."
+    python3 -m venv "$DIR/.venv"
+    "$DIR/.venv/bin/pip" install --quiet --upgrade pip
+    "$DIR/.venv/bin/pip" install --quiet -r "$DIR/requirements.txt"
+    echo "설치 완료."
+fi
+
+exec "$PY" "$DIR/run.py" "$@"

@@ -48,7 +48,7 @@ def run_pair_cli() -> None:
     agent_id = secrets.get_or_create_agent_id()
     print(f"\n✓ 저장됨. agent_id = {agent_id}")
     print("  이제 에이전트를 실행하세요:")
-    print("    ./local_agent/.venv/bin/python local_agent/run.py")
+    print("    ./local_agent/agent")
 
 
 if __name__ == "__main__":

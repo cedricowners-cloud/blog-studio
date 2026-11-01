@@ -51,33 +51,38 @@ python3 -m venv local_agent/.venv
 #    (RLS: jobs INSERT 는 account_name ∈ my_accounts() 를 요구)
 # 2) 웹 /agent 의 "페어링 값 보기" 로 세션 JSON 복사
 # 3) 페어링
-./local_agent/.venv/bin/python local_agent/run.py pair
+./local_agent/agent pair
 # 4) 상시 실행
-./local_agent/.venv/bin/python local_agent/run.py
+./local_agent/agent
 ```
 
-### run.py 를 쓰는 이유 (cwd 함정)
+### `agent` 래퍼를 쓰는 이유 (cwd 함정)
 
-`python -m local_agent.main` 은 `sys.path[0]` 이 패키지의 **부모** 디렉토리여야
-동작한다. 즉 저장소 루트에서만 되고, `local_agent/` 안에서 실행하면 이렇게 죽는다.
+이 에이전트는 설치형 패키지가 아니다 (`pyproject.toml` 이 `package-mode = false`
+라 `pip install -e .` 도 실패한다). 그래서 직접 python 을 호출하면 **인터프리터
+경로와 스크립트 경로를 둘 다** 셸이 cwd 기준으로 해석하고, 어느 디렉토리에
+있는지에 따라 접두사를 붙이거나 떼야 한다. 섞이면 이렇게 실패한다.
 
 ```
+# local_agent/ 안에서 접두사를 붙였을 때
+zsh: no such file or directory: ./local_agent/.venv/bin/python
+can't open file '.../local_agent/local_agent/run.py'
+
+# 저장소 루트가 아닌 곳에서 -m 을 썼을 때
 ModuleNotFoundError: No module named 'local_agent'
 ```
 
-`pyproject.toml` 이 `package-mode = false` 라 설치형 패키지가 아니어서
-(`pip install -e .` 도 실패한다) cwd 에 전적으로 의존하기 때문이다.
-
-`local_agent/run.py` 는 cwd 대신 `__file__` 로 부모 경로를 직접 넣으므로
-**어느 디렉토리에서 실행해도 같다**. 아래 세 가지가 모두 동일하게 동작한다.
+`local_agent/agent` 는 자기 위치(`$0`)를 기준으로 venv 와 `run.py` 를 찾으므로
+**호출 위치와 무관하다.** venv 가 없으면 만들고 의존성까지 설치한다.
 
 ```bash
-cd blog_studio && ./local_agent/.venv/bin/python local_agent/run.py pair
-cd local_agent && ./.venv/bin/python run.py pair
-cd /어디든  && /절대/경로/local_agent/.venv/bin/python /절대/경로/local_agent/run.py pair
+cd blog_studio    && ./local_agent/agent pair
+cd local_agent    && ./agent pair
+cd /어디든        && /절대/경로/local_agent/agent pair
 ```
 
-`-m local_agent.main` 방식도 저장소 루트에서라면 그대로 쓸 수 있다.
+내부적으로는 `run.py` 가 cwd 대신 `__file__` 로 패키지 부모 경로를 `sys.path` 에
+넣어 import 를 해결한다. 저장소 루트에서라면 `-m local_agent.main` 도 그대로 쓸 수 있다.
 
 ### 설정 탐색 순서 (Supabase URL / anon key)
 
