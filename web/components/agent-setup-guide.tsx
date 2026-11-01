@@ -150,17 +150,21 @@ function MacGuide() {
       </Step>
 
       <Step n={5} title="자동 실행 등록 (선택)">
-        <Cmd>{`./local_agent/agent migrate\n./local_agent/agent install`}</Cmd>
+        <Cmd>./local_agent/agent install</Cmd>
         <p>
           Mac에 로그인할 때마다 자동으로 켜지고, 꺼지면 다시 켜집니다. 터미널을
           닫아도 됩니다.
         </p>
+        <p className="text-amber-800">
+          <b>&ldquo;키체인에 세션이 없습니다&rdquo;</b> 라고 나오면 아래를 먼저
+          실행한 뒤 다시 <code>install</code> 하세요. 예전에 비밀번호 방식으로
+          페어링한 경우입니다 (백그라운드에서는 비밀번호를 물어볼 수 없어
+          키체인에 옮겨둬야 합니다).
+        </p>
+        <Cmd>./local_agent/agent migrate</Cmd>
         <p className="text-neutral-500">
-          <code>migrate</code> 는 기존 암호를 Mac 키체인으로 옮기는 단계입니다
-          (백그라운드에서는 암호를 물어볼 수 없기 때문). 상태 확인은{" "}
-          <code>./local_agent/agent status</code>, 로그는{" "}
-          <code>./local_agent/agent logs</code>, 해제는{" "}
-          <code>./local_agent/agent uninstall</code>.
+          상태 확인 <code>agent status</code> · 로그{" "}
+          <code>agent logs</code> · 해제 <code>agent uninstall</code>
         </p>
       </Step>
     </ol>
