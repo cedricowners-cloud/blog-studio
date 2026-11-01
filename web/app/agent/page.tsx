@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 
+import AgentSetupGuide from "@/components/agent-setup-guide";
 import { getBrowserSupabase } from "@/lib/supabase";
 import {
   JOB_STATUS_LABEL,
@@ -100,7 +101,7 @@ export default function AgentPage() {
           userId={userId}
           onChanged={() => refresh().catch(() => {})}
         />
-        <PairingCard />
+        <AgentSetupGuide />
         <JobsCard jobs={jobs} />
       </div>
     </main>
@@ -118,7 +119,7 @@ function AgentStatusCard({
     return (
       <Card title="에이전트 상태">
         <div className="text-sm text-neutral-600">
-          연결된 에이전트가 없습니다. 아래 <b>페어링</b> 안내를 따라 PC에서
+          연결된 에이전트가 없습니다. 아래 <b>설치 가이드</b>를 따라 내 PC에서
           에이전트를 실행하세요.
         </div>
       </Card>
@@ -275,109 +276,6 @@ function AccountsCard({
       </div>
 
       {msg && <p className="text-xs text-red-600">{msg}</p>}
-    </Card>
-  );
-}
-
-function PairingCard() {
-  const [token, setToken] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-
-  async function reveal() {
-    setErr(null);
-    try {
-      const sb = getBrowserSupabase();
-      const { data } = await sb.auth.getSession();
-      const s = data.session;
-      if (!s) throw new Error("세션이 없습니다. 다시 로그인하세요.");
-      // 한 줄로 내보낸다. 들여쓴 JSON 은 터미널에 붙여넣을 때 첫 줄만
-      // 프로그램이 받고 나머지가 셸 명령으로 실행돼버린다.
-      setToken(
-        JSON.stringify({
-          access_token: s.access_token,
-          refresh_token: s.refresh_token,
-        }),
-      );
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    }
-  }
-
-  async function copy() {
-    if (!token) return;
-    await navigator.clipboard.writeText(token);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
-  }
-
-  return (
-    <Card
-      title="페어링"
-      description="에이전트가 Supabase에 접근할 수 있도록 현재 로그인 세션을 PC로 옮기는 과정입니다."
-    >
-      <ol className="text-sm space-y-2 list-decimal list-inside text-neutral-700">
-        <li>
-          아래 <b>페어링 값</b>을 복사한 뒤, PC에서 다음을 실행하고 붙여넣기:
-          <pre className="mt-1 bg-neutral-50 border rounded p-2 text-xs overflow-x-auto">
-{`cd blog_studio && ./local_agent/agent pair`}
-          </pre>
-          <span className="text-neutral-500">
-            첫 실행이면 venv 생성·의존성 설치까지 자동으로 합니다.{" "}
-            <code>local_agent</code> 안에 있다면 <code>./agent pair</code> 로도
-            됩니다 — <code>agent</code> 는 호출 위치와 무관합니다.
-          </span>
-        </li>
-        <li>
-          상시 실행:
-          <pre className="mt-1 bg-neutral-50 border rounded p-2 text-xs overflow-x-auto">
-{`cd blog_studio && ./local_agent/agent`}
-          </pre>
-        </li>
-        <li className="text-amber-800">
-          첫 발행 때는 브라우저 창이 열리고 <b>180초 동안 직접 로그인</b>해야
-          합니다. 이후에는 저장된 쿠키로 자동 진행됩니다.
-        </li>
-      </ol>
-
-      <div className="border-t pt-3 space-y-2">
-        {token === null ? (
-          <button
-            onClick={reveal}
-            className="text-sm border rounded px-3 py-1.5 hover:bg-neutral-50"
-          >
-            페어링 값 보기
-          </button>
-        ) : (
-          <>
-            <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded p-2">
-              이 값은 <b>로그인 세션 자체</b>입니다. 내 PC의 에이전트에만
-              붙여넣고, 캡처·공유·채팅 전송은 하지 마세요.
-            </div>
-            <textarea
-              readOnly
-              value={token}
-              rows={5}
-              className="w-full border rounded p-2 text-[11px] font-mono"
-            />
-            <div className="flex gap-2">
-              <button
-                onClick={copy}
-                className="text-sm border rounded px-3 py-1.5 hover:bg-neutral-50"
-              >
-                {copied ? "복사됨" : "복사"}
-              </button>
-              <button
-                onClick={() => setToken(null)}
-                className="text-sm border rounded px-3 py-1.5 hover:bg-neutral-50"
-              >
-                숨기기
-              </button>
-            </div>
-          </>
-        )}
-        {err && <p className="text-xs text-red-600">{err}</p>}
-      </div>
     </Card>
   );
 }
