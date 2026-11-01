@@ -1,9 +1,12 @@
 """로컬 에이전트 엔트리포인트.
 
-실행:
-  python -m local_agent.main              # 트레이 아이콘 + worker 시작
-  python -m local_agent.main --no-tray    # 포어그라운드 로그 (개발용)
-  python -m local_agent.pairing           # 페어링 CLI
+실행은 **저장소 루트(blog_studio/)에서** 한다. local_agent/ 안에서 돌리면
+sys.path[0] 이 local_agent/ 가 되어 패키지를 못 찾고
+`ModuleNotFoundError: No module named 'local_agent'` 로 죽는다.
+
+  ./local_agent/.venv/bin/python -m local_agent.main            # 트레이 + worker
+  ./local_agent/.venv/bin/python -m local_agent.main --no-tray  # 포어그라운드
+  ./local_agent/.venv/bin/python -m local_agent.pairing         # 페어링 CLI
 """
 from __future__ import annotations
 
@@ -38,15 +41,19 @@ def _ensure_passphrase():
         secrets.set_passphrase(pw)
         # 토큰 없으면 페어링 필요
         print(
-            "passphrase 설정 완료. 이제 페어링이 필요합니다:\n"
-            "  python -m local_agent.pairing"
+            "passphrase 설정 완료. 이제 페어링이 필요합니다.\n"
+            "저장소 루트에서:\n"
+            "  ./local_agent/.venv/bin/python -m local_agent.pairing"
         )
         sys.exit(0)
     else:
         pw = getpass.getpass("로컬 passphrase: ")
         secrets.set_passphrase(pw)
         if secrets.load_agent_auth() is None:
-            print("페어링 정보 없음 — `python -m local_agent.pairing` 을 먼저 실행하세요.")
+            print(
+                "페어링 정보 없음 — 저장소 루트에서 먼저 실행하세요:\n"
+                "  ./local_agent/.venv/bin/python -m local_agent.pairing"
+            )
             sys.exit(1)
 
 

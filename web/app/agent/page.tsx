@@ -317,11 +317,13 @@ function PairingCard() {
     >
       <ol className="text-sm space-y-2 list-decimal list-inside text-neutral-700">
         <li>
-          PC에서 저장소를 받고 의존성 설치:
+          PC에서 의존성 설치. <b>모든 명령은 저장소 루트에서</b> 실행하세요 —{" "}
+          <code>local_agent/</code> 안에서 실행하면{" "}
+          <code>No module named &apos;local_agent&apos;</code> 로 실패합니다.
           <pre className="mt-1 bg-neutral-50 border rounded p-2 text-xs overflow-x-auto">
-{`cd blog_studio/local_agent
-python3 -m venv .venv
-./.venv/bin/pip install -r requirements.txt`}
+{`cd blog_studio
+python3 -m venv local_agent/.venv
+./local_agent/.venv/bin/pip install -r local_agent/requirements.txt`}
           </pre>
         </li>
         <li>
@@ -337,11 +339,16 @@ SUPABASE_ANON_KEY=<anon key>`}
           </pre>
         </li>
         <li>
-          아래 페어링 값을 복사해서{" "}
-          <code>./.venv/bin/python -m local_agent.pairing</code> 실행 후 붙여넣기
+          아래 페어링 값을 복사해서 실행 후 붙여넣기:
+          <pre className="mt-1 bg-neutral-50 border rounded p-2 text-xs overflow-x-auto">
+{`./local_agent/.venv/bin/python -m local_agent.pairing`}
+          </pre>
         </li>
         <li>
-          <code>./.venv/bin/python -m local_agent.main</code> 으로 상시 실행
+          상시 실행:
+          <pre className="mt-1 bg-neutral-50 border rounded p-2 text-xs overflow-x-auto">
+{`./local_agent/.venv/bin/python -m local_agent.main`}
+          </pre>
         </li>
         <li className="text-amber-800">
           첫 발행 때는 브라우저 창이 열리고 <b>180초 동안 직접 로그인</b>해야

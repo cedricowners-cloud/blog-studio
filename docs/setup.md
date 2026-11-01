@@ -40,10 +40,21 @@ pnpm dev  # → http://localhost:3000
 네이버 발행은 Chrome 자동화가 필요해서 사용자 PC에서 돌아가는 에이전트가
 담당한다. 웹은 Supabase `jobs` 테이블에 작업을 넣고 진행 상황만 읽는다.
 
+**모든 명령은 저장소 루트(`blog_studio/`)에서 실행한다.** `local_agent/` 안으로
+들어가서 `python -m local_agent.main` 을 돌리면 `sys.path[0]` 이 `local_agent/`
+가 되어 `local_agent` 패키지를 찾지 못하고 아래처럼 실패한다.
+
+```
+ModuleNotFoundError: No module named 'local_agent'
+```
+
+(pyproject 가 `package-mode = false` 라 설치형 패키지가 아니고, 패키지
+디렉토리의 **부모**가 import 경로에 있어야 한다.)
+
 ```bash
-cd local_agent
-python3 -m venv .venv
-./.venv/bin/pip install -r requirements.txt   # poetry 쓰면 `poetry install`
+cd blog_studio                                      # ← 루트 유지
+python3 -m venv local_agent/.venv
+./local_agent/.venv/bin/pip install -r local_agent/requirements.txt
 
 # Supabase 접속 정보는 보통 따로 넣을 필요가 없다 (아래 "설정 탐색 순서" 참고)
 
@@ -51,9 +62,9 @@ python3 -m venv .venv
 #    (RLS: jobs INSERT 는 account_name ∈ my_accounts() 를 요구)
 # 2) 웹 /agent 의 "페어링 값 보기" 로 세션 JSON 복사
 # 3) 페어링
-./.venv/bin/python -m local_agent.pairing
+./local_agent/.venv/bin/python -m local_agent.pairing
 # 4) 상시 실행
-./.venv/bin/python -m local_agent.main
+./local_agent/.venv/bin/python -m local_agent.main
 ```
 
 ### 설정 탐색 순서 (Supabase URL / anon key)
