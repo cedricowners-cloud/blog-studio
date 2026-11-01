@@ -291,12 +291,13 @@ function PairingCard() {
       const { data } = await sb.auth.getSession();
       const s = data.session;
       if (!s) throw new Error("세션이 없습니다. 다시 로그인하세요.");
+      // 한 줄로 내보낸다. 들여쓴 JSON 은 터미널에 붙여넣을 때 첫 줄만
+      // 프로그램이 받고 나머지가 셸 명령으로 실행돼버린다.
       setToken(
-        JSON.stringify(
-          { access_token: s.access_token, refresh_token: s.refresh_token },
-          null,
-          2,
-        ),
+        JSON.stringify({
+          access_token: s.access_token,
+          refresh_token: s.refresh_token,
+        }),
       );
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
