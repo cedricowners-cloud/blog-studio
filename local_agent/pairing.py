@@ -51,12 +51,34 @@ def _read_payload() -> str:
     return buf
 
 
-def run_pair_cli() -> None:
-    print("=== blog_studio Local Agent Pairing ===")
-    pw = getpass.getpass("로컬 passphrase (없으면 새로 설정): ")
+def _prompt_passphrase() -> str:
+    """passphrase 입력. 최초 설정이면 확인까지 받는다.
+
+    확인 없이 오타가 통과하면 그 오타가 곧 passphrase 가 되고, 다음 실행에서
+    '복호화할 수 없습니다' 로 막혀 페어링을 처음부터 다시 해야 한다.
+    """
+    is_new = not secrets.SALT_PATH.exists()
+    if not is_new:
+        pw = getpass.getpass("로컬 passphrase: ")
+        if not pw:
+            print("passphrase 비워둘 수 없습니다.")
+            sys.exit(1)
+        return pw
+
+    print("최초 설정 — 로컬 passphrase 를 정합니다 (이 PC의 토큰 암호화용).")
+    pw = getpass.getpass("새 passphrase: ")
     if not pw:
         print("passphrase 비워둘 수 없습니다.")
         sys.exit(1)
+    if pw != getpass.getpass("확인: "):
+        print("passphrase 불일치.")
+        sys.exit(1)
+    return pw
+
+
+def run_pair_cli() -> None:
+    print("=== blog_studio Local Agent Pairing ===")
+    pw = _prompt_passphrase()
     secrets.set_passphrase(pw)
 
     print(
