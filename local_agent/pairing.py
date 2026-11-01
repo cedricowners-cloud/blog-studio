@@ -47,8 +47,8 @@ def run_pair_cli() -> None:
     secrets.save_agent_auth(refresh_token, access_token)
     agent_id = secrets.get_or_create_agent_id()
     print(f"\n✓ 저장됨. agent_id = {agent_id}")
-    print("  이제 저장소 루트에서 에이전트를 실행하세요:")
-    print("    ./local_agent/.venv/bin/python -m local_agent.main")
+    print("  이제 에이전트를 실행하세요:")
+    print("    ./local_agent/.venv/bin/python local_agent/run.py")
 
 
 if __name__ == "__main__":

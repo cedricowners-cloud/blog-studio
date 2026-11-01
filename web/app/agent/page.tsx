@@ -317,9 +317,7 @@ function PairingCard() {
     >
       <ol className="text-sm space-y-2 list-decimal list-inside text-neutral-700">
         <li>
-          PC에서 의존성 설치. <b>모든 명령은 저장소 루트에서</b> 실행하세요 —{" "}
-          <code>local_agent/</code> 안에서 실행하면{" "}
-          <code>No module named &apos;local_agent&apos;</code> 로 실패합니다.
+          PC에서 의존성 설치 (저장소 루트에서):
           <pre className="mt-1 bg-neutral-50 border rounded p-2 text-xs overflow-x-auto">
 {`cd blog_studio
 python3 -m venv local_agent/.venv
@@ -341,13 +339,16 @@ SUPABASE_ANON_KEY=<anon key>`}
         <li>
           아래 페어링 값을 복사해서 실행 후 붙여넣기:
           <pre className="mt-1 bg-neutral-50 border rounded p-2 text-xs overflow-x-auto">
-{`./local_agent/.venv/bin/python -m local_agent.pairing`}
+{`./local_agent/.venv/bin/python local_agent/run.py pair`}
           </pre>
+          <span className="text-neutral-500">
+            <code>run.py</code> 는 어느 디렉토리에서 실행해도 됩니다.
+          </span>
         </li>
         <li>
           상시 실행:
           <pre className="mt-1 bg-neutral-50 border rounded p-2 text-xs overflow-x-auto">
-{`./local_agent/.venv/bin/python -m local_agent.main`}
+{`./local_agent/.venv/bin/python local_agent/run.py`}
           </pre>
         </li>
         <li className="text-amber-800">

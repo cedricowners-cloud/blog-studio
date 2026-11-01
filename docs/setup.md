@@ -40,19 +40,8 @@ pnpm dev  # → http://localhost:3000
 네이버 발행은 Chrome 자동화가 필요해서 사용자 PC에서 돌아가는 에이전트가
 담당한다. 웹은 Supabase `jobs` 테이블에 작업을 넣고 진행 상황만 읽는다.
 
-**모든 명령은 저장소 루트(`blog_studio/`)에서 실행한다.** `local_agent/` 안으로
-들어가서 `python -m local_agent.main` 을 돌리면 `sys.path[0]` 이 `local_agent/`
-가 되어 `local_agent` 패키지를 찾지 못하고 아래처럼 실패한다.
-
-```
-ModuleNotFoundError: No module named 'local_agent'
-```
-
-(pyproject 가 `package-mode = false` 라 설치형 패키지가 아니고, 패키지
-디렉토리의 **부모**가 import 경로에 있어야 한다.)
-
 ```bash
-cd blog_studio                                      # ← 루트 유지
+cd blog_studio
 python3 -m venv local_agent/.venv
 ./local_agent/.venv/bin/pip install -r local_agent/requirements.txt
 
@@ -62,10 +51,33 @@ python3 -m venv local_agent/.venv
 #    (RLS: jobs INSERT 는 account_name ∈ my_accounts() 를 요구)
 # 2) 웹 /agent 의 "페어링 값 보기" 로 세션 JSON 복사
 # 3) 페어링
-./local_agent/.venv/bin/python -m local_agent.pairing
+./local_agent/.venv/bin/python local_agent/run.py pair
 # 4) 상시 실행
-./local_agent/.venv/bin/python -m local_agent.main
+./local_agent/.venv/bin/python local_agent/run.py
 ```
+
+### run.py 를 쓰는 이유 (cwd 함정)
+
+`python -m local_agent.main` 은 `sys.path[0]` 이 패키지의 **부모** 디렉토리여야
+동작한다. 즉 저장소 루트에서만 되고, `local_agent/` 안에서 실행하면 이렇게 죽는다.
+
+```
+ModuleNotFoundError: No module named 'local_agent'
+```
+
+`pyproject.toml` 이 `package-mode = false` 라 설치형 패키지가 아니어서
+(`pip install -e .` 도 실패한다) cwd 에 전적으로 의존하기 때문이다.
+
+`local_agent/run.py` 는 cwd 대신 `__file__` 로 부모 경로를 직접 넣으므로
+**어느 디렉토리에서 실행해도 같다**. 아래 세 가지가 모두 동일하게 동작한다.
+
+```bash
+cd blog_studio && ./local_agent/.venv/bin/python local_agent/run.py pair
+cd local_agent && ./.venv/bin/python run.py pair
+cd /어디든  && /절대/경로/local_agent/.venv/bin/python /절대/경로/local_agent/run.py pair
+```
+
+`-m local_agent.main` 방식도 저장소 루트에서라면 그대로 쓸 수 있다.
 
 ### 설정 탐색 순서 (Supabase URL / anon key)
 

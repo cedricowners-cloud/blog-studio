@@ -11,21 +11,24 @@
 
 ## 실행
 
-**반드시 저장소 루트(`blog_studio/`)에서 실행한다.** 이 디렉토리 안으로
-들어가서 실행하면 `sys.path[0]` 이 `local_agent/` 가 되어 `local_agent` 패키지를
-찾지 못하고 `ModuleNotFoundError: No module named 'local_agent'` 로 죽는다.
-(`pyproject.toml` 이 `package-mode = false` 라 설치형 패키지가 아니고, 패키지
-디렉토리의 **부모**가 import 경로에 있어야 한다.)
+`run.py` 를 쓴다. **어느 디렉토리에서 실행해도 된다.**
 
 ```bash
-cd blog_studio                                      # ← 루트 유지
+cd blog_studio
 python3 -m venv local_agent/.venv
 ./local_agent/.venv/bin/pip install -r local_agent/requirements.txt
 
-./local_agent/.venv/bin/python -m local_agent.pairing   # 최초 1회 페어링
-./local_agent/.venv/bin/python -m local_agent.main      # 상시 실행
-./local_agent/.venv/bin/python -m local_agent.main --no-tray   # 포어그라운드 로그
+./local_agent/.venv/bin/python local_agent/run.py pair        # 최초 1회 페어링
+./local_agent/.venv/bin/python local_agent/run.py             # 상시 실행
+./local_agent/.venv/bin/python local_agent/run.py --no-tray   # 포어그라운드 로그
 ```
+
+`run.py` 없이 `-m local_agent.main` 을 쓰려면 **저장소 루트에서만** 된다.
+`local_agent/` 안에서 실행하면 `sys.path[0]` 이 `local_agent/` 가 되어 패키지를
+찾지 못하고 `ModuleNotFoundError: No module named 'local_agent'` 로 죽는다.
+`pyproject.toml` 이 `package-mode = false` 라 설치형 패키지가 아니어서 cwd 에
+전적으로 의존하기 때문이다. `run.py` 는 cwd 대신 `__file__` 로 부모 경로를
+직접 넣어 이 문제를 없앤다.
 
 `main` 은 시스템 트레이 아이콘 + 백그라운드 worker 를 띄운다. `pystray` 가
 없으면 포어그라운드 모드로 자동 폴백한다.
