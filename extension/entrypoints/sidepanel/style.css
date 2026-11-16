@@ -1,0 +1,479 @@
+:root {
+  --bg: #f6f7f9;
+  --card: #ffffff;
+  --text: #1c2430;
+  --muted: #667085;
+  --line: #e3e6eb;
+  --accent: #1f6feb;
+  --accent-text: #ffffff;
+  --ok: #17803d;
+  --warn: #b45309;
+  --bad: #b42318;
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14181f;
+    --card: #1c222b;
+    --text: #e6e9ee;
+    --muted: #98a2b3;
+    --line: #2c3440;
+    --accent: #4c8dff;
+    --accent-text: #0b1220;
+    --ok: #4ade80;
+    --warn: #fbbf24;
+    --bad: #f87171;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.55 -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif;
+}
+
+.top {
+  padding: 14px 16px 10px;
+  border-bottom: 1px solid var(--line);
+  background: var(--card);
+}
+
+.top h1 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.stage {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+main {
+  padding: 14px 16px 32px;
+  display: grid;
+  gap: 12px;
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+
+.card h2 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.hint {
+  margin: 0 0 10px;
+  color: var(--muted);
+}
+
+.buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+button {
+  font: inherit;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--text);
+  cursor: pointer;
+}
+
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+  font-weight: 600;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.field {
+  display: block;
+  width: 100%;
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  font: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+textarea.field {
+  resize: vertical;
+  min-height: 140px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+
+.buttons + .message {
+  margin-top: 10px;
+}
+
+.rows {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 12px;
+  margin: 0;
+}
+
+.rows dt {
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.rows dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.ok {
+  color: var(--ok);
+  font-weight: 600;
+}
+
+.warn {
+  color: var(--warn);
+  font-weight: 600;
+}
+
+.bad {
+  color: var(--bad);
+  font-weight: 600;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+th,
+td {
+  text-align: left;
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+
+th {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+td.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.scroll {
+  max-height: 320px;
+  overflow: auto;
+}
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+details summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+
+.message {
+  margin: 0;
+}
+
+details.colors {
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.color-row {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0;
+}
+
+.color-row .hint {
+  margin: 0;
+  font-size: 12px;
+}
+
+input.swatch {
+  width: 34px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: none;
+  cursor: pointer;
+}
+
+.hint.warn {
+  color: var(--warn);
+  font-weight: 400;
+}
+
+/* ───────── 탭, 글쓰기, SEO, 설정 화면 ───────── */
+
+[hidden] {
+  display: none !important;
+}
+
+.stack {
+  display: grid;
+  gap: 12px;
+}
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding: 6px 0;
+  background: var(--bg);
+}
+
+.tab {
+  flex: 1;
+  padding: 7px 4px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.tab.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+  font-weight: 600;
+}
+
+.labeled {
+  display: block;
+  margin: 0 0 8px;
+}
+
+.labeled .field {
+  margin-bottom: 2px;
+}
+
+.label {
+  display: block;
+  margin: 0 0 3px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.hint.small,
+.small {
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+
+span.hint.small {
+  display: block;
+}
+
+select.field {
+  appearance: auto;
+}
+
+textarea.field.tall {
+  min-height: 260px;
+}
+
+details.more {
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+details.more[open] summary {
+  margin-bottom: 8px;
+}
+
+.badge {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 1px 7px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.badge.ok {
+  color: var(--ok);
+  border-color: var(--ok);
+}
+
+.badge.warn {
+  color: var(--warn);
+  border-color: var(--warn);
+}
+
+ol.steps {
+  margin: 0 0 8px;
+  padding-left: 20px;
+}
+
+ul.plain {
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+ul.plain li {
+  padding: 5px 0;
+  border-bottom: 1px solid var(--line);
+  overflow-wrap: anywhere;
+}
+
+ul.plain li:last-child {
+  border-bottom: 0;
+}
+
+button.link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  text-align: left;
+  font-weight: 600;
+}
+
+button.link.muted {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.notice {
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.choices {
+  display: grid;
+  gap: 4px;
+  margin: 0 0 8px;
+}
+
+.choice,
+.check {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0 0 6px;
+}
+
+.choice input,
+.check input {
+  margin-top: 4px;
+}
+
+pre.output {
+  margin: 6px 0;
+  padding: 8px 10px;
+  max-height: 360px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+  font-size: 13px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.bubble {
+  margin: 8px 0;
+}
+
+.bubble .who {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.bubble.user pre.output {
+  border-color: var(--accent);
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 8px 0;
+}
+
+.chip {
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+}
+
+.chip.done {
+  color: var(--ok);
+  border-color: var(--ok);
+}
+
+.chip.now {
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.chip.shown {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+
+.card > .buttons {
+  margin-bottom: 8px;
+}
+
+.card > .message:not(:empty) {
+  margin-top: 4px;
+}
+
+/* 글을 읽고 쓰는 칸은 보통 글씨로 (마크업을 다루는 채우기 칸만 고정폭) */
+textarea.field.prose {
+  font-family: inherit;
+  font-size: 13px;
+}

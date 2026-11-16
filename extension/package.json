@@ -1,0 +1,21 @@
+{
+  "name": "blog-studio-extension",
+  "private": true,
+  "version": "0.3.0",
+  "description": "blog_studio 크롬 확장: 내 AI 키로 글을 만들고, 네이버 블로그 글쓰기 화면에 채운다",
+  "type": "module",
+  "scripts": {
+    "dev": "wxt",
+    "build": "wxt build",
+    "zip": "wxt zip",
+    "typecheck": "tsc --noEmit",
+    "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --disable-warning=ExperimentalWarning --test \"tests/*.test.ts\"",
+    "prompts": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/build-prompt-pack.ts",
+    "preview": "node scripts/preview-server.ts",
+    "postinstall": "wxt prepare"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.0",
+    "wxt": "^0.21.5"
+  }
+}
