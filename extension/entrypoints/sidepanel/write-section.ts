@@ -65,7 +65,7 @@ export function createWriteSection(deps: WriteDeps): HTMLElement {
 
   const needPack = h('section', { class: 'card' },
     h('h2', null, '글쓰기'),
-    h('p', { class: 'message warn' }, '프롬프트 묶음을 아직 불러오지 않았어요. 설정에서 먼저 불러와 주세요.'),
+    h('p', { class: 'message warn' }, '프롬프트가 아직 없어요. 설정에서 로그인하면 받아 와요.'),
   );
   const toSettings = h('button', { type: 'button', class: 'primary' }, '설정 열기');
   toSettings.addEventListener('click', deps.openSettings);

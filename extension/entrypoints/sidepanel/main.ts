@@ -4,20 +4,23 @@ import { createFillSection } from './fill-section';
 import { createReaderSection } from './reader-section';
 import { createSeoSection } from './seo-section';
 import { createSettingsSection } from './settings-section';
+import { createVoiceSection } from './voice-section';
 import { createWriteSection } from './write-section';
 
-// 사이드 패널 화면. 탭 네 개로 나뉜다.
+// 사이드 패널 화면. 탭 다섯 개로 나뉜다.
 //   글쓰기      글쓰기 방식 6개로 글 만들기 (write-section.ts)
 //   SEO 8단계   프롬프트 8개를 차례로 돌려 글 만들기 (seo-section.ts)
 //   채우기      만든 글을 네이버 글쓰기 화면에 넣기 (fill-section.ts), 에디터 점검 (reader-section.ts)
+//   내 말투     내 글 모으기, 말투 카드 (voice-section.ts)
 //   설정        프롬프트 묶음, AI 키 (settings-section.ts)
 
-type TabId = 'write' | 'seo' | 'fill' | 'settings';
+type TabId = 'write' | 'seo' | 'fill' | 'voice' | 'settings';
 
 const TABS: { id: TabId; label: string }[] = [
   { id: 'write', label: '글쓰기' },
   { id: 'seo', label: 'SEO 8단계' },
   { id: 'fill', label: '채우기' },
+  { id: 'voice', label: '내 말투' },
   { id: 'settings', label: '설정' },
 ];
 
@@ -56,6 +59,7 @@ const sendToFill = (title: string, body: string) => {
 panels.set('write', createWriteSection({ sendToFill, openSettings }));
 panels.set('seo', createSeoSection({ sendToFill, openSettings }));
 panels.set('fill', h('div', { class: 'stack' }, fill.element, createReaderSection()));
+panels.set('voice', createVoiceSection({ openSettings }));
 panels.set('settings', createSettingsSection());
 
 const tabBar = h('nav', { class: 'tabs' },

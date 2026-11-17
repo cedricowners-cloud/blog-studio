@@ -2,7 +2,7 @@
 // 확장 패키지에는 프롬프트를 넣지 않는다. 묶음 파일을 한 번 불러와 확장 저장소에 둔다.
 // 나중에 로그인이 붙으면 같은 모양으로 서버에서 받는다.
 
-export const PACK_FORMAT = 1;
+export const PACK_FORMAT = 2;
 
 export type SeoPlatform = 'naver_blog' | 'custom_domain';
 
@@ -35,7 +35,15 @@ export interface PromptPack {
   source: string;
   methods: { common: string; items: PackMethod[] };
   glue: Record<string, string>;
-  seo: { steps: PackSeoStep[]; platform_labels: Record<SeoPlatform, string> };
+  seo: {
+    steps: PackSeoStep[];
+    platform_labels: Record<SeoPlatform, string>;
+    /**
+     * 한 번에 끝까지 돌릴 때, AI가 되묻는 단계에 대신 보내는 답. 단계 번호 → 답의 틀.
+     * 틀에는 {{purpose}}, {{tone}}, {{cta}}, {{voice}}, {{past_titles}} 자리가 들어갈 수 있다.
+     */
+    auto_replies: Record<string, string>;
+  };
 }
 
 /** 묶음에 꼭 있어야 하는 글 조각 이름 */
@@ -65,6 +73,11 @@ export const GLUE_KEYS = [
   'feedback.tail',
   'output_format',
   'seo.prev_wrapper',
+  // 내 글에서 말투 배우기 (웹에는 없고 확장에만 있다)
+  'voice.analyze',
+  'voice.post_item',
+  'voice.block',
+  'voice.past_titles',
 ] as const;
 
 export type GlueKey = (typeof GLUE_KEYS)[number];
@@ -122,6 +135,9 @@ export function validatePack(value: unknown): PackCheck {
   if (!isRecord(seo) || !Array.isArray(seo.steps) || !isRecord(seo.platform_labels)) {
     errors.push('SEO 단계 프롬프트가 없어요.');
   } else {
+    if (!isRecord(seo.auto_replies) || Object.values(seo.auto_replies).some((v) => typeof v !== 'string')) {
+      errors.push('한 번에 돌릴 때 쓰는 답이 없어요.');
+    }
     for (const step of seo.steps as unknown[]) {
       const good =
         isRecord(step) &&

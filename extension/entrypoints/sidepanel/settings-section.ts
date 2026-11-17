@@ -1,79 +1,12 @@
 import { browser } from 'wxt/browser';
 import { listModels, pickDefaultModel, PROVIDERS, type LLMProvider } from '../../lib/llm/client';
 import { COMMON_KEY_NOTES, PROVIDER_GUIDES } from '../../lib/llm/providers';
-import { describePack, validatePack } from '../../lib/prompts/pack';
-import { loadKeys, loadPack, loadUsageToday, onStoreChange, saveKey, savePack, type SavedKey } from '../../lib/store';
+import { loadKeys, loadUsageToday, onStoreChange, saveKey, type SavedKey } from '../../lib/store';
+import { createAccountCard } from './account-section';
 import { errorText, guarded, h, num, option, setMessage } from './dom';
 
-// 설정 화면: 프롬프트 묶음 불러오기, AI 키 넣기.
+// 설정 화면: 로그인과 프롬프트 (account-section.ts), AI 키 넣기.
 // 키는 이 컴퓨터의 확장 저장소에만 둔다. 화면에 다시 보여 주지 않는다 (끝 4자리만).
-
-function packCard(): HTMLElement {
-  const state = h('p', { class: 'message' });
-  const message = h('p', { class: 'message' });
-  const fileInput = h('input', { type: 'file', accept: '.json,application/json' });
-  fileInput.hidden = true;
-  const loadButton = h('button', { type: 'button', class: 'primary' }, '프롬프트 묶음 불러오기');
-  const removeButton = h('button', { type: 'button' }, '지우기');
-
-  async function draw(): Promise<void> {
-    const pack = await loadPack();
-    if (pack) setMessage(state, '불러온 묶음: ' + describePack(pack), 'ok');
-    else setMessage(state, '아직 불러오지 않았어요. 글을 만들려면 먼저 불러와 주세요.', 'warn');
-    removeButton.hidden = !pack;
-  }
-
-  loadButton.addEventListener('click', () => fileInput.click());
-
-  fileInput.addEventListener('change', () =>
-    guarded(loadButton, (m) => setMessage(message, m, 'bad'), async () => {
-      const file = fileInput.files?.[0];
-      fileInput.value = '';
-      if (!file) return;
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(await file.text());
-      } catch {
-        setMessage(message, '이 파일을 읽지 못했어요. 프롬프트 묶음 파일(.json)이 맞는지 확인해 주세요.', 'bad');
-        return;
-      }
-      const check = validatePack(parsed);
-      if (!check.ok) {
-        setMessage(message, '프롬프트 묶음이 아니에요: ' + check.errors.join(' / '), 'bad');
-        return;
-      }
-      await savePack(check.pack);
-      setMessage(message, '불러왔어요. 이제 글쓰기와 SEO 8단계를 쓸 수 있어요.', 'ok');
-      await draw();
-    }),
-  );
-
-  removeButton.addEventListener('click', () =>
-    guarded(removeButton, (m) => setMessage(message, m, 'bad'), async () => {
-      await savePack(null);
-      setMessage(message, '지웠어요.');
-      await draw();
-    }),
-  );
-
-  onStoreChange(['pack'], () => void draw());
-  void draw();
-
-  return h('section', { class: 'card' },
-    h('h2', null, '프롬프트'),
-    h('p', { class: 'hint' },
-      '내 프롬프트(글쓰기 방식 6개, SEO 8단계)는 확장 안에 들어 있지 않아요. 묶음 파일을 한 번 불러오면 이 컴퓨터에 저장돼요.',
-    ),
-    state,
-    h('div', { class: 'buttons' }, loadButton, removeButton, fileInput),
-    message,
-    h('details', null,
-      h('summary', null, '묶음 파일은 어디에 있나요?'),
-      h('p', { class: 'hint' }, 'blog_studio 폴더 안의 extension/prompt-pack/blog-studio-prompts.json 이에요.'),
-      h('p', { class: 'hint' }, '웹의 프롬프트를 고친 뒤에는 extension 폴더에서 npm run prompts 로 다시 만들고, 여기서 다시 불러와 주세요.'),
-    ),
-  );
-}
 
 function providerCard(provider: LLMProvider): HTMLElement {
   const guide = PROVIDER_GUIDES[provider];
@@ -173,7 +106,7 @@ function providerCard(provider: LLMProvider): HTMLElement {
 
 export function createSettingsSection(): HTMLElement {
   return h('div', { class: 'stack' },
-    packCard(),
+    createAccountCard(),
     h('section', { class: 'card' },
       h('h2', null, 'AI 키'),
       h('p', { class: 'hint' }, '쓰고 싶은 AI 하나만 넣어도 돼요. 키를 붙여넣고 [확인]을 누르면 쓸 수 있는 모델을 보여 줘요. 확인에는 돈이 들지 않아요.'),

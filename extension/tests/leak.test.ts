@@ -33,6 +33,7 @@ test('패키지에 프롬프트 글이 들어 있지 않다', { skip }, async ()
   for (const method of pack.methods.items) for (const line of distinctiveLines(method.prompt, 20)) needles.add(line);
   for (const step of pack.seo.steps) for (const line of distinctiveLines(step.prompt, 20)) needles.add(line);
   for (const value of Object.values(pack.glue)) for (const line of distinctiveLines(value, 12)) needles.add(line);
+  for (const value of Object.values(pack.seo.auto_replies)) for (const line of distinctiveLines(value, 12)) needles.add(line);
   assert.ok(needles.size > 200, `견줄 줄이 너무 적어요 (${needles.size}개)`);
 
   const texts = filesUnder(dist)
@@ -49,13 +50,29 @@ test('패키지에 프롬프트 글이 들어 있지 않다', { skip }, async ()
   assert.deepEqual(found, [], '패키지에 프롬프트 글이 들어 있어요');
 });
 
-test('패키지의 접근 허용 주소는 네이버 블로그와 AI 3사뿐이다', { skip }, () => {
+test('패키지의 접근 허용 주소는 네이버 블로그, AI 3사, 그리고 내 서버 하나뿐이다', { skip }, () => {
   const manifest = JSON.parse(readFileSync(join(dist, 'manifest.json'), 'utf-8')) as { host_permissions?: string[]; permissions?: string[] };
-  assert.deepEqual([...(manifest.host_permissions ?? [])].sort(), [
+  const hosts = [...(manifest.host_permissions ?? [])];
+  // 서버(Supabase) 주소는 .env 에 있을 때만 들어간다. 있어도 주소 하나뿐이어야 한다.
+  const server = hosts.filter((host) => /^https:\/\/[a-z0-9]+\.supabase\.co\/\*$/.test(host));
+  assert.ok(server.length <= 1, '서버 주소는 하나만 들어가야 해요');
+  assert.deepEqual(hosts.filter((host) => !server.includes(host)).sort(), [
     'https://api.anthropic.com/*',
     'https://api.openai.com/*',
     'https://blog.naver.com/*',
     'https://generativelanguage.googleapis.com/*',
   ]);
   assert.ok(!(manifest.permissions ?? []).includes('<all_urls>'));
+});
+
+test('패키지에 관리용 키가 들어 있지 않다', { skip }, () => {
+  // 공개용 키만 들어가야 한다. 관리용 키(service_role)는 권한 규칙을 건너뛰므로 절대 넣지 않는다.
+  for (const file of filesUnder(dist).filter((name) => /\.(js|html|json)$/.test(name))) {
+    const text = readFileSync(file, 'utf-8');
+    assert.ok(!text.includes('service_role'), `${file} 에 service_role 이 들어 있어요`);
+    for (const token of text.match(/eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}/g) ?? []) {
+      const payload = Buffer.from((token.split('.')[1] ?? '').replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf-8');
+      assert.ok(!payload.includes('service_role'), `${file} 에 관리용 키가 들어 있어요`);
+    }
+  }
 });

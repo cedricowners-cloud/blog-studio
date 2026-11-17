@@ -4,6 +4,7 @@ import { browser } from 'wxt/browser';
 import { PROVIDERS, type LLMProvider, type LLMUsage, type ModelInfo } from './llm/client.ts';
 import { validatePack, type PromptPack } from './prompts/pack.ts';
 import type { SeoRun } from './seo/engine.ts';
+import { normalizeVoice, type VoiceState } from './voice/library.ts';
 
 export interface SavedKey {
   key: string;
@@ -24,6 +25,11 @@ const KEYS = {
   writeForm: 'writeForm',
   writeHistory: 'writeHistory',
   seoRuns: 'seoRuns',
+  seoAuto: 'seoAutoForm',
+  voice: 'voice',
+  // 아래 둘은 lib/server/session.ts 가 다룬다. 바뀌었는지 듣는 데만 쓴다.
+  session: 'serverSession',
+  packSource: 'promptPackSource',
 } as const;
 
 async function read<T>(key: string, fallback: T): Promise<T> {
@@ -85,6 +91,12 @@ export async function loadPack(): Promise<PromptPack | null> {
 }
 
 export const savePack = (pack: PromptPack | null) => (pack ? write(KEYS.pack, pack) : browser.storage.local.remove(KEYS.pack));
+
+/** 저장돼 있는 묶음이 예전 형식이라 못 쓰는 상태인지. 다시 만들어 불러오라고 알려 주는 데 쓴다 */
+export async function hasOutdatedPack(): Promise<boolean> {
+  const raw = await read<unknown>(KEYS.pack, null);
+  return raw !== null && !validatePack(raw).ok;
+}
 
 // ───────── 오늘 쓴 양 ─────────
 
@@ -163,3 +175,16 @@ export async function deleteSeoRun(id: string): Promise<void> {
   const runs = await loadSeoRuns();
   await write(KEYS.seoRuns, runs.filter((r) => r.id !== id));
 }
+
+// ───────── 한 번에 돌릴 때 적어 둔 값 (다음에 다시 적지 않게) ─────────
+
+export const loadSeoAutoForm = () => read<Record<string, string>>(KEYS.seoAuto, {});
+export const saveSeoAutoForm = (form: Record<string, string>) => write(KEYS.seoAuto, form);
+
+// ───────── 내 글과 말투 카드 ─────────
+
+export async function loadVoice(): Promise<VoiceState> {
+  return normalizeVoice(await read<unknown>(KEYS.voice, null));
+}
+
+export const saveVoice = (state: VoiceState) => write(KEYS.voice, state);

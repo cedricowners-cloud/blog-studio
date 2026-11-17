@@ -265,9 +265,9 @@ input.swatch {
 }
 
 .tab {
-  flex: 1;
-  padding: 7px 4px;
-  font-size: 13px;
+  flex: 1 1 auto;
+  padding: 7px 2px;
+  font-size: 12px;
   white-space: nowrap;
 }
 

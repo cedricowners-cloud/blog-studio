@@ -7,3 +7,7 @@ dist/
 fixtures/editor-sample-*.json
 # 프롬프트 묶음은 web 폴더의 원본에서 만든다 (npm run prompts). 올리지 않는다.
 prompt-pack/
+# 서버 주소와 공개용 키. 올리지 않는다 (.env.example 을 올린다).
+.env
+.env.*
+!.env.example

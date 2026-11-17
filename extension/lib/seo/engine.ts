@@ -15,6 +15,20 @@ export interface SeoStepResult {
   completed_at: string | null;
 }
 
+/** 한 번에 끝까지 돌릴 때 쓰는 값. 시작할 때 한 번 받아서 진행 상황과 같이 둔다. */
+export interface AutoSettings {
+  /** 글의 목적 */
+  purpose: string;
+  /** 바라는 말투 */
+  tone: string;
+  /** 읽은 사람이 했으면 하는 행동 */
+  cta: string;
+  /** 내 글에서 배운 말투. 없으면 빈 글 */
+  voice_card: string;
+  /** 내가 이미 쓴 글의 제목. 겹치지 않게 하려고 알려 준다 */
+  past_titles: string[];
+}
+
 export interface SeoRun {
   id: string;
   platform: SeoPlatform;
@@ -29,6 +43,8 @@ export interface SeoRun {
   created_at: string;
   updated_at: string;
   results: Record<number, SeoStepResult>;
+  /** 한 번에 끝까지 돌리는 방식으로 시작했으면 그때 받은 값. 한 단계씩 하는 방식이면 없다 */
+  auto?: AutoSettings | null;
 }
 
 export type ChatFn = (messages: ChatMessage[]) => Promise<string>;
@@ -90,6 +106,7 @@ export function createRun(input: {
   llm_provider: LLMProvider | null;
   include_optional: boolean;
   now: string;
+  auto?: AutoSettings | null;
 }): SeoRun {
   const keyword = input.main_keyword.trim();
   if (!keyword) throw new Error('메인 키워드를 적어 주세요.');
@@ -106,6 +123,7 @@ export function createRun(input: {
     created_at: input.now,
     updated_at: input.now,
     results: {},
+    auto: input.mode === 'api' ? (input.auto ?? null) : null,
   };
 }
 
@@ -215,4 +233,114 @@ export function resetStep(run: SeoRun, stepId: number, now: string): SeoRun {
   const results = { ...run.results };
   delete results[stepId];
   return { ...run, results, updated_at: now, status: 'in_progress' };
+}
+
+/** 제목 단계의 결과에서 고를 수 있는 제목들. 가장 뒤에 나온 제목 단계의 것을 쓴다. */
+export function titleCandidates(pack: PromptPack, run: SeoRun): string[] {
+  let found: string[] = [];
+  for (const step of stepsOf(pack, run)) {
+    const titles = extractTitles(run.results[step.id]?.final_output ?? '');
+    if (titles.length > 0) found = titles;
+  }
+  return found;
+}
+
+// ───────────── 한 번에 끝까지 돌리기 ─────────────
+
+/** AI가 되묻는 단계에 대신 보낼 답. 묶음에 그 단계의 답이 없으면 null. */
+export function autoReplyFor(pack: PromptPack, run: SeoRun, step: PackSeoStep): string | null {
+  const template = pack.seo.auto_replies[String(step.id)];
+  const auto = run.auto;
+  if (!template || !auto) return null;
+  return fill(template, { purpose: auto.purpose, tone: auto.tone, cta: auto.cta, ...voiceAddition(pack, auto.voice_card, auto.past_titles) });
+}
+
+/** 초안을 쓰게 할 때 덧붙이는 글: 내 말투와, 이미 쓴 글의 제목. 없는 것은 빈 글이다. */
+export function voiceAddition(pack: PromptPack, card: string, titles: string[]): { voice: string; past_titles: string } {
+  const text = card.trim();
+  return {
+    voice: text ? fill(glue(pack, 'voice.block'), { card: text }) : '',
+    past_titles: titles.length > 0 ? fill(glue(pack, 'voice.past_titles'), { titles: titles.map((t) => `- ${t}`).join('\n') }) : '',
+  };
+}
+
+/** 이 단계가 말투를 묻는 단계인지. 묶음의 "대신 보내는 답"에 말투 자리가 있는 단계다. */
+export function stepUsesVoice(pack: PromptPack, step: PackSeoStep): boolean {
+  return (pack.seo.auto_replies[String(step.id)] ?? '').includes('{{voice}}');
+}
+
+/**
+ * done: 모든 단계를 끝냄 · stopped: 사람이 멈춤 · needs-answer: 이 단계는 사람이 답해야 함
+ * needs-title: 고를 제목이 없음 · truncated: AI의 답이 길이 한도에 걸려 잘림
+ */
+export type AutoStop = 'done' | 'stopped' | 'needs-answer' | 'needs-title' | 'truncated';
+
+export interface AutoDeps {
+  chat: ChatFn;
+  now: () => string;
+  /** 진행 상황이 바뀔 때마다 부른다. 여기서 저장하고 화면을 고친다 */
+  onChange: (run: SeoRun, step: PackSeoStep, doing: 'asking' | 'answering' | 'finished') => Promise<void> | void;
+  /** 사람이 [멈추기]를 눌렀는지 */
+  shouldStop?: () => boolean;
+  /** 직전 답이 길이 한도에 걸려 잘렸는지 */
+  wasTruncated?: () => boolean;
+}
+
+export interface AutoOutcome {
+  run: SeoRun;
+  stop: AutoStop;
+  /** 멈춘 단계. 다 끝났으면 null */
+  step_id: number | null;
+}
+
+/**
+ * 남은 단계를 차례로 끝까지 돌린다. 하다가 멈춘 곳에서 다시 부르면 이어서 한다.
+ * AI 호출이 실패하면 오류를 그대로 던진다. 그때까지의 진행 상황은 onChange 로 이미 넘겼다.
+ */
+export async function runAll(pack: PromptPack, start: SeoRun, deps: AutoDeps): Promise<AutoOutcome> {
+  if (start.mode !== 'api' || !start.auto) throw new Error('한 번에 돌리는 방식으로 시작한 글이 아니에요.');
+  let run = start;
+
+  for (;;) {
+    const steps = stepsOf(pack, run);
+    const step = steps.find((s) => !run.results[s.id]?.completed_at);
+    if (!step) {
+      if (run.status !== 'completed') run = { ...run, status: 'completed', current_step_index: Math.max(0, steps.length - 1), updated_at: deps.now() };
+      return { run, stop: 'done', step_id: null };
+    }
+    if (deps.shouldStop?.()) return { run, stop: 'stopped', step_id: step.id };
+
+    if (resultOf(run, step.id).conversation.length === 0) {
+      if (step.needs_selected_title && !run.selected_title) {
+        const first = titleCandidates(pack, run)[0];
+        if (!first) return { run, stop: 'needs-title', step_id: step.id };
+        run = selectTitle(run, first, deps.now());
+      }
+      await deps.onChange(run, step, 'asking');
+      run = await startStep(pack, run, step.id, deps.chat, deps.now());
+      if (deps.wasTruncated?.()) {
+        await deps.onChange(run, step, 'finished');
+        return { run, stop: 'truncated', step_id: step.id };
+      }
+    }
+
+    // AI가 되묻는 단계: 아직 답을 보낸 적이 없으면 대신 답한다.
+    if (step.has_user_turn && resultOf(run, step.id).conversation.length <= 2) {
+      const reply = autoReplyFor(pack, run, step);
+      if (!reply) {
+        await deps.onChange(run, step, 'finished');
+        return { run, stop: 'needs-answer', step_id: step.id };
+      }
+      await deps.onChange(run, step, 'answering');
+      if (deps.shouldStop?.()) return { run, stop: 'stopped', step_id: step.id };
+      run = await sendMessage(pack, run, step.id, reply, deps.chat, deps.now());
+      if (deps.wasTruncated?.()) {
+        await deps.onChange(run, step, 'finished');
+        return { run, stop: 'truncated', step_id: step.id };
+      }
+    }
+
+    run = advance(pack, run, step.id, deps.now());
+    await deps.onChange(run, step, 'finished');
+  }
 }

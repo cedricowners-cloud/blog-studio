@@ -15,18 +15,26 @@
 | G1 | AI 키 넣기, 발급 안내, 모델 고르기 | 됨. 가짜 서버로만 시험함 |
 | G3 | 글쓰기 방식 6개로 글 만들기 | 됨. 웹과 같은 프롬프트. **진짜 AI 키로는 아직 불러 보지 못함** |
 | G8 | SEO 8단계 글쓰기 | 됨. 웹과 같은 프롬프트. **진짜 AI 키로는 아직 불러 보지 못함** |
-| E4~ | 웹 연결(로그인), 이미지 | 아직. 만든 글은 이 컴퓨터에만 저장된다. 이미지 자리는 글자로만 표시된다 |
+| G8 | SEO 8단계를 한 번에 끝까지 돌리기 | 됨. 한 단계씩 하는 방식과 골라 쓴다. 멈춘 곳부터 이어서 돌릴 수 있다 |
+| V1, V2 | 내 말투: 내 블로그 글 모으기, 말투 카드, SEO 8단계에 적용 (한 번에 돌릴 때는 자동, 한 단계씩 할 때는 [내 말투 넣기]) | 일부 됨. **실제 블로그 탭에서 읽는 것은 아직 확인하지 못함** |
+| G2 | 로그인해서 프롬프트를 서버에서 받기 | 됨. 서버의 권한 규칙은 진짜 DB에서 확인함. **설치한 확장에서 진짜 계정으로 로그인하는 것은 아직 확인하지 못함** |
+| E4~ | 만든 글을 서버에 저장, 업종 설정, 이미지 | 아직. 만든 글은 이 컴퓨터에만 저장된다. 이미지 자리는 글자로만 표시된다 |
 
 ## 빌드와 시험
 
 ```bash
 npm install
+cp .env.example .env   # 처음 한 번. 서버 주소와 공개용 키를 채운다
 npm run build
 npm run prompts
 npm test
 ```
 
-- `npm run prompts`는 웹의 프롬프트를 읽어 `prompt-pack/blog-studio-prompts.json` 묶음 파일을 만든다. 웹의 프롬프트를 고친 뒤에는 다시 만든다.
+- `.env`에는 blog_studio 서버(Supabase)의 주소와 공개용 키를 넣는다. 웹의 `web/.env.local`에 있는 `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`와 같은 값을 써도 된다. 없이 빌드하면 로그인 없이 파일로만 프롬프트를 불러올 수 있다.
+- `npm run prompts:push`는 프롬프트 묶음을 만들어 서버에 올린다. 웹의 프롬프트나 `scripts/extension-prompts.ts`를 고친 뒤에 한다. 관리용 키는 `web/.env.local`에서 읽는다.
+
+- `npm run prompts`는 프롬프트를 읽어 `prompt-pack/blog-studio-prompts.json` 묶음 파일을 만든다. 웹의 프롬프트나 `scripts/extension-prompts.ts`를 고친 뒤에는 다시 만들고, 확장의 설정 탭에서 다시 불러온다.
+- 묶음에는 형식 번호가 있다 (지금은 2). 확장이 바뀌어 번호가 오르면 예전 묶음은 쓸 수 없다. 다시 만들어 불러온다.
 - `npm test`는 빌드한 파일을 쓴다. 그래서 빌드를 먼저 한다.
 - 결과는 `dist/chrome-mv3/` 폴더에 생긴다.
 
@@ -37,6 +45,9 @@ npm test
 | `tests/parity.test.ts` | 확장에 옮긴 글쓰기 코드가 웹의 코드와 같은 결과를 내는지. 웹의 진짜 코드를 불러와 견준다 |
 | `tests/llm.test.ts` | AI 호출 (요청 모양, 답 읽기, 다시 시도, 오류 안내). 가짜 서버를 쓴다 |
 | `tests/writer.test.ts` | 글 만들기의 흐름과 SEO 8단계의 진행 |
+| `tests/auto.test.ts` | SEO 8단계를 한 번에 끝까지 돌리기 (대신 답하기, 멈추고 이어 하기) |
+| `tests/server.test.ts` | 서버와 주고받기 (로그인, 로그인 유지, 프롬프트 받기). 가짜 서버를 쓴다 |
+| `tests/voice.test.ts` | 내 글 모음, 말투 분석 프롬프트, 네이버 글 목록과 본문 읽기 |
 | `tests/leak.test.ts` | 패키지에 프롬프트 글이 들어가지 않았는지, 접근 허용 주소가 늘지 않았는지 |
 | `tests/blocks.test.ts`, `tests/bridge.test.ts` | 본문 변환과 에디터 채우기 |
 
@@ -49,10 +60,13 @@ npm test
 
 ## 처음 쓸 때
 
-1. **설정** 탭에서 [프롬프트 묶음 불러오기]를 누르고 `prompt-pack/blog-studio-prompts.json`을 고른다.
+1. **설정** 탭에서 blog_studio 웹과 같은 이메일·비밀번호로 로그인한다. 프롬프트를 서버에서 받아 온다.
+   - 프롬프트를 받으려면 서버의 허락 목록(`prompt_access`)에 있어야 한다. 넣는 방법은 `supabase/migrations/017_prompt_packs.sql`의 머리에 있다.
+   - 서버를 쓸 수 없으면 같은 카드의 "파일로 불러오기"에서 `prompt-pack/blog-studio-prompts.json`을 고른다.
 2. **설정** 탭에서 쓸 AI의 키를 붙여넣고 [확인]을 누른다. 쓸 모델을 고른다.
-3. **글쓰기** 또는 **SEO 8단계** 탭에서 글을 만든다.
-4. [채우기로 보내기]를 누르고, 네이버 글쓰기 화면을 연 탭에서 [채우기]를 누른다.
+3. (선택) **내 말투** 탭에서 내 블로그의 글을 모으고 [말투 정리하기]를 누른다. 네이버 블로그를 연 탭이 있어야 한다.
+4. **글쓰기** 또는 **SEO 8단계** 탭에서 글을 만든다. SEO 8단계는 "한 단계씩"과 "한 번에 끝까지" 중에서 고른다.
+5. [채우기로 보내기]를 누르고, 네이버 글쓰기 화면을 연 탭에서 [채우기]를 누른다.
 
 ## 크롬에 설치하지 않고 화면 보기 (개발용)
 
@@ -62,24 +76,27 @@ npm run preview
 ```
 
 `http://localhost:4179`에서 사이드 패널 화면이 열린다. 확장 기능은 가짜로 흉내 내고, AI는 미리 적어 둔 답을 돌려준다.
-주소 뒤에 `?pack=1&keys=1`을 붙이면 프롬프트 묶음과 가짜 키가 들어간 상태로 열린다. 네이버 화면에 채우는 것은 여기서 볼 수 없다.
+주소 뒤에 `?pack=1&keys=1`을 붙이면 프롬프트 묶음과 가짜 키가 들어간 상태로 열린다. `&blog=1`을 더 붙이면 네이버 블로그 탭이 열려 있는 것처럼 꾸민다 (가짜 글 목록). `&slow=1`은 AI의 답을 천천히 보낸다. 네이버 화면에 채우는 것은 여기서 볼 수 없다.
 
 ## 폴더
 
 | 위치 | 내용 |
 |---|---|
 | `entrypoints/background.ts` | 아이콘을 누르면 사이드 패널을 연다. 저장소를 확장의 화면에서만 읽게 한다 |
-| `entrypoints/sidepanel/` | 사이드 패널 화면. `main.ts` 탭, `write-section.ts` 글쓰기, `seo-section.ts` SEO 8단계, `fill-section.ts` 채우기, `reader-section.ts` 에디터 점검, `settings-section.ts` 설정 |
+| `entrypoints/sidepanel/` | 사이드 패널 화면. `main.ts` 탭, `write-section.ts` 글쓰기, `seo-section.ts` SEO 8단계, `fill-section.ts` 채우기, `reader-section.ts` 에디터 점검, `voice-section.ts` 내 말투, `settings-section.ts` 설정, `account-section.ts` 로그인과 프롬프트 |
 | `entrypoints/editor-bridge.ts` | 네이버 글쓰기 화면 안에서 도는 코드. 읽기, 넣기, 되돌리기 |
+| `entrypoints/naver-reader.ts` | 네이버 블로그 탭 안에서 도는 코드. 내 블로그의 글 목록과 본문을 읽는다. 읽기만 한다 |
 | `lib/llm/` | AI 호출 (Gemini, OpenAI, Claude), 모델 목록, 키 발급 안내 |
 | `lib/prompts/pack.ts` | 프롬프트 묶음의 모양과 검사 |
+| `lib/server/` | blog_studio 서버(Supabase). `client.ts` 로그인·프롬프트 받기 요청, `session.ts` 로그인 정보와 받은 묶음 보관, `config.ts` 서버 주소 |
 | `lib/writer/` | 글쓰기 방식 6개: 프롬프트 조립, 답 해석, 통과 조건 세기, 다시 쓰기. 웹의 `web/lib/ontology/`를 옮긴 것 |
-| `lib/seo/engine.ts` | SEO 8단계의 진행. 웹의 `web/lib/seo-workflow*.ts`를 옮긴 것 |
+| `lib/seo/engine.ts` | SEO 8단계의 진행. 웹의 `web/lib/seo-workflow*.ts`를 옮긴 것. 한 번에 끝까지 돌리기는 확장에만 있다 |
+| `lib/voice/` | 내 말투. `library.ts` 내 글 모음과 말투 카드, `naver.ts` 네이버 글 목록·본문 읽기, `run.ts` 블로그 탭에 읽기 코드 넣기 |
 | `lib/store.ts` | 이 컴퓨터의 확장 저장소에 두는 것 (AI 키, 묶음, 만든 글, 진행 상황) |
 | `lib/blocks/` | 블록 목록의 타입, 마크업 → 블록 변환 |
 | `lib/editor/` | 블록 목록 → 에디터 부품, 글쓰기 탭에 코드 넣기 |
 | `lib/clipboard.ts` | 복사하기 (채우기가 안 될 때의 대체 방법) |
-| `scripts/` | 프롬프트 묶음 만들기, 미리보기 서버. 패키지에 들어가지 않는다 |
+| `scripts/` | 프롬프트 묶음 만들기와 서버에 올리기, 미리보기 서버. 패키지에 들어가지 않는다. `glue.ts`는 웹 코드에서 옮겨 적은 글, `extension-prompts.ts`는 확장에만 있는 글 (대신 보내는 답, 말투 정리) |
 | `prompt-pack/` | 만든 프롬프트 묶음. git에 올리지 않는다 |
 | `tests/` | 시험 |
 | `fixtures/` | 내 에디터에서 받은 견본. git에 올리지 않는다 |
@@ -90,6 +107,7 @@ npm run preview
 |---|---|---|
 | AI 키 | 서버에 저장 | 이 컴퓨터에만 저장 |
 | 모델 | 정해 둔 모델 | 키로 쓸 수 있는 모델 목록에서 고름 |
+| 프롬프트 | 서버의 파일 (`web/prompts`) | 로그인해서 DB(`prompt_packs`)에서 받음. 고친 뒤 `npm run prompts:push`로 올려야 반영됨 |
 | 업종 설정 | 고를 수 있음 | 아직 없음 (로그인을 붙인 뒤에 넣는다) |
 | 상위 글 조사 | 자동 | 아직 없음 |
 | 공고 링크 | 서버가 내용을 가져옴 | 가져오지 못함. 내용을 직접 붙여넣는다 |
@@ -116,5 +134,9 @@ npm run preview
 - 프롬프트 글을 `entrypoints/`와 `lib/`에 적지 않는다. 묶음 파일로만 주고받는다. `tests/leak.test.ts`가 확인한다.
 - AI 키는 요청 헤더에만 넣는다. 주소, 오류 글, 기록에 넣지 않는다.
 - 페이지에서 읽어 온 글자를 화면에 넣을 때는 `textContent`만 쓴다.
-- 접근 허용 주소는 `blog.naver.com`과 AI 3사의 API 주소뿐이다. 모든 사이트 접근 권한을 요청하지 않는다.
+- 접근 허용 주소는 `blog.naver.com`, AI 3사의 API 주소, blog_studio 서버 주소 하나뿐이다. 모든 사이트 접근 권한을 요청하지 않는다.
+- 확장에는 서버의 공개용 키만 넣는다. 관리용 키(service role)는 넣지 않는다. `tests/leak.test.ts`가 확인한다.
+- 비밀번호는 로그인 요청에만 쓰고 저장하지 않는다.
+- 네이버 블로그에서는 읽기만 한다. 로그인 정보를 싣지 않고 공개 글만 읽는다. 내 블로그의 글만 모은다.
+- 내 글과 말투 카드는 이 컴퓨터에만 둔다. 말투를 정리할 때만 사용자가 고른 AI로 보낸다.
 - 웹의 글쓰기 코드나 프롬프트를 고치면 `npm test`를 돌린다. 확장과 달라지면 `tests/parity.test.ts`가 알려 준다.

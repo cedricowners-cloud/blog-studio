@@ -6,11 +6,13 @@
 //   - web/prompts/*.md              글쓰기 방식 6개와 공통 프롬프트
 //   - web/lib/seo-workflow.ts       SEO 8단계 프롬프트
 //   - web/lib/ontology/prompt-builder.ts 안의 출력 형식 안내
-//   - scripts/glue.ts               그 밖의 글 조각
+//   - scripts/glue.ts               그 밖의 글 조각 (웹 코드에서 옮겨 적은 것)
+//   - scripts/extension-prompts.ts  확장에만 있는 글 (한 번에 돌릴 때의 답, 내 말투)
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { GLUE_KEYS, PACK_FORMAT, validatePack, type PackSeoStep, type PromptPack, type SeoPlatform } from '../lib/prompts/pack.ts';
+import { AUTO_REPLIES, EXTENSION_GLUE } from './extension-prompts.ts';
 import { COMMON_FILE, GLUE, METHODS } from './glue.ts';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -77,14 +79,20 @@ export async function buildPack(repoRoot: string = REPO_ROOT): Promise<PromptPac
     built_at: new Date().toISOString(),
     source: 'blog_studio/web (prompts, lib/seo-workflow.ts, lib/ontology)',
     methods: { common, items },
-    glue: { ...GLUE, output_format: outputFormat },
-    seo: { steps, platform_labels: { ...seoModule.PLATFORM_LABELS } },
+    glue: { ...GLUE, ...EXTENSION_GLUE, output_format: outputFormat },
+    seo: { steps, platform_labels: { ...seoModule.PLATFORM_LABELS }, auto_replies: { ...AUTO_REPLIES } },
   };
 
   const check = validatePack(JSON.parse(JSON.stringify(pack)));
   if (!check.ok) throw new Error('만든 묶음이 형식에 맞지 않아요: ' + check.errors.join(' / '));
   const extra = Object.keys(pack.glue).filter((key) => !(GLUE_KEYS as readonly string[]).includes(key));
   if (extra.length > 0) throw new Error('확장이 모르는 글 조각이 있어요: ' + extra.join(', '));
+  // 대신 보내는 답은 AI가 되묻는 단계에만 둔다. 없는 단계 번호를 적었으면 알려 준다.
+  for (const id of Object.keys(pack.seo.auto_replies)) {
+    const step = steps.find((s) => String(s.id) === id);
+    if (!step) throw new Error(`대신 보내는 답의 단계 번호 ${id} 가 SEO 단계에 없어요.`);
+    if (!step.has_user_turn) throw new Error(`${id}단계는 AI가 되묻지 않는 단계라서 대신 보내는 답이 필요 없어요.`);
+  }
   return pack;
 }
 
