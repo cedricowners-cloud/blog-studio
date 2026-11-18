@@ -105,3 +105,54 @@ export interface ProbeResult {
   /** 진단 정보 */
   diag: ProbeDiagnostics;
 }
+
+// ───────── 사진 넣기 ─────────
+
+/** 사진 넣기를 시작할 수 있는지 살펴본 결과 */
+export interface ImagesBeginResult {
+  ok: boolean;
+  reason: string | null;
+  /** 붙여넣기를 받는 곳을 어디서 찾았는지. buffer: 에디터의 숨은 입력 칸 · editable: 본문 */
+  target: 'buffer' | 'editable' | null;
+  /** 글에 원래 있던 사진 수 */
+  existing: number;
+}
+
+export interface ImagePasteRequest {
+  /** 파일 이름. 올라온 사진과 짝을 맞추는 데 쓴다 */
+  name: string;
+  /** data:image/...;base64,... */
+  dataUrl: string;
+}
+
+export interface ImagePasteResult {
+  ok: boolean;
+  reason: string | null;
+  /** 붙여넣은 뒤 에디터에 사진이 나타났는지 */
+  appeared: boolean;
+}
+
+export interface ImagesFinishRequest {
+  /** 본문에 나오는 순서대로: 이미지 자리의 글자와, 그 자리에 넣을 사진의 파일 이름 */
+  slots: { text: string; fileName: string | null }[];
+  /** 올라오기를 기다리는 시간 (밀리초) */
+  timeoutMs: number;
+}
+
+export interface ImagesFinishResult {
+  ok: boolean;
+  reason: string | null;
+  /** 붙여넣은 사진 수 */
+  pasted: number;
+  /** 네이버에 다 올라간 사진 수 */
+  uploaded: number;
+  /** 자리에 넣은 사진 수 */
+  placed: number;
+  /** 사진이 들어가지 않아 글자로 남은 자리 */
+  emptySlots: string[];
+  /** 자리를 찾지 못해 글 끝에 붙인 사진 수 */
+  appended: number;
+  /** 넣은 뒤 다시 읽었을 때 문서에 있는 사진 수 */
+  foundAfter: number;
+  log: string[];
+}

@@ -1,8 +1,14 @@
 import { defineUnlistedScript } from '#imports';
+import { allImages, isUploaded, placeImages } from '../lib/editor/images';
 import type {
   ComponentSummary,
   FillRequest,
   FillResult,
+  ImagePasteRequest,
+  ImagePasteResult,
+  ImagesBeginResult,
+  ImagesFinishRequest,
+  ImagesFinishResult,
   ProbeDiagnostics,
   ProbeResult,
 } from '../lib/editor/types';
@@ -21,7 +27,7 @@ import type {
 export default defineUnlistedScript(() => {
   const w = window as any;
   // 이 숫자를 올리면, 이미 열려 있는 탭에 들어가 있던 예전 코드가 새 코드로 바뀐다.
-  const BRIDGE_VERSION = 5;
+  const BRIDGE_VERSION = 6;
   if (w.__blogStudioEditor && w.__blogStudioEditor.version === BRIDGE_VERSION) return;
 
   const RAW_LIMIT = 600_000; // 문서 전체를 실어 보낼 때의 글자 수 상한
@@ -463,5 +469,229 @@ export default defineUnlistedScript(() => {
     return { ok: true, reason: null };
   }
 
-  w.__blogStudioEditor = { version: BRIDGE_VERSION, probe, fill, restore };
+  // ───────────────────────── 사진 넣기 ─────────────────────────
+  // 사진의 주소는 네이버가 사진을 받은 뒤에 정해 준다. 그래서 세 걸음으로 한다.
+  //   1) imagesBegin   지금 문서를 따로 떠 두고, 붙여넣기를 받을 곳과 커서를 준비한다.
+  //   2) imagePaste    사진을 한 장씩 붙여넣는다. 에디터가 네이버에 올린다.
+  //   3) imagesFinish  다 올라오면, 떠 둔 문서의 "이미지 자리"에 사진 부품을 끼워서 다시 넣는다.
+  // 붙여넣기는 사람이 Ctrl+V 로 사진을 붙여넣는 것과 같은 일을 에디터에 알리는 것이다. 저장이나 발행은 하지 않는다.
+
+  interface ImageWork {
+    /** 붙여넣기 전의 문서 (글자로 떠 둔 것) */
+    baseJson: string;
+    /** 원래 있던 사진의 id */
+    already: Set<string>;
+    pasted: number;
+  }
+  let imageWork: ImageWork | null = null;
+
+  function readComponents(ed: any): any[] {
+    try {
+      const doc = unwrap(ed.getDocumentData());
+      return doc && Array.isArray(doc.components) ? doc.components : [];
+    } catch {
+      return [];
+    }
+  }
+
+  /** 붙여넣기를 받는 곳. 에디터는 숨은 입력 칸(iframe)에서 붙여넣기를 받는다. 없으면 본문에서 찾는다. */
+  function findPasteTarget(): { el: any; kind: 'buffer' | 'editable' } | null {
+    try {
+      const buffer: any = document.querySelector("iframe[id^='input_buffer']");
+      const inner = buffer ? buffer.contentDocument : null;
+      const el = inner ? inner.querySelector("[contenteditable='true']") || inner.body : null;
+      if (el) return { el, kind: 'buffer' };
+    } catch {
+      /* 다른 곳의 프레임이면 읽지 못한다. 본문에서 찾는다 */
+    }
+    const editable = document.querySelector("[contenteditable='true']");
+    return editable ? { el: editable, kind: 'editable' } : null;
+  }
+
+  /** 붙여넣기는 커서가 있어야 받는다. 자리는 나중에 옮기므로 본문의 맨 끝에 둔다. */
+  function placeCaretAtEnd(): void {
+    try {
+      const paragraphs = document.querySelectorAll('.se-text-paragraph');
+      const last: any = paragraphs[paragraphs.length - 1];
+      if (!last) return;
+      last.scrollIntoView({ block: 'center' });
+      const rect = last.getBoundingClientRect();
+      const at = { bubbles: true, cancelable: true, composed: true, clientX: rect.left + 8, clientY: rect.top + rect.height / 2, button: 0, buttons: 1 };
+      for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) {
+        const Ctor: any = type.startsWith('pointer') ? w.PointerEvent : w.MouseEvent;
+        if (Ctor) last.dispatchEvent(new Ctor(type, at));
+      }
+      const range = document.createRange();
+      range.selectNodeContents(last);
+      range.collapse(false);
+      const selection = w.getSelection ? w.getSelection() : null;
+      if (selection) {
+        selection.removeAllRanges();
+        selection.addRange(range);
+      }
+    } catch {
+      /* 커서를 놓지 못해도 붙여넣기를 시도해 본다 */
+    }
+  }
+
+  function dataUrlToFile(name: string, dataUrl: string): any {
+    const match = /^data:([^;,]+);base64,(.*)$/s.exec(dataUrl);
+    if (!match) throw new Error('사진 데이터의 모양이 달라요');
+    const binary = w.atob(match[2]);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+    return new w.File([bytes], name, { type: match[1] });
+  }
+
+  function imagesBegin(): ImagesBeginResult {
+    const fail = (reason: string): ImagesBeginResult => ({ ok: false, reason, target: null, existing: 0 });
+    const hit = findEditor();
+    if (!hit) return fail('no-editor');
+    const ed = hit.editor;
+    if (typeof ed.getDocumentData !== 'function' || typeof ed.setDocumentData !== 'function') return fail('no-setDocumentData');
+    if (hasDraftPrompt()) return fail('draft-prompt');
+    if (document.visibilityState && document.visibilityState !== 'visible') return fail('hidden');
+    const target = findPasteTarget();
+    if (!target) return fail('no-paste-target');
+
+    let data: any;
+    try {
+      data = ed.getDocumentData();
+    } catch (err) {
+      return fail('read-failed: ' + errorText(err));
+    }
+    const doc = unwrap(data);
+    if (!doc || !Array.isArray(doc.components)) return fail('unexpected-document');
+
+    const existing = allImages(doc.components);
+    imageWork = { baseJson: JSON.stringify(data), already: new Set(existing.map((image) => String(image.id))), pasted: 0 };
+    placeCaretAtEnd();
+    return { ok: true, reason: null, target: target.kind, existing: existing.length };
+  }
+
+  async function imagePaste(req: ImagePasteRequest): Promise<ImagePasteResult> {
+    const fail = (reason: string): ImagePasteResult => ({ ok: false, reason, appeared: false });
+    const work = imageWork;
+    const hit = findEditor();
+    if (!work || !hit) return fail(work ? 'no-editor' : 'not-started');
+    const target = findPasteTarget();
+    if (!target) return fail('no-paste-target');
+    if (document.visibilityState && document.visibilityState !== 'visible') return fail('hidden');
+
+    const ours = () => allImages(readComponents(hit.editor)).filter((image) => !work.already.has(String(image.id)));
+    const before = ours().length;
+    try {
+      const transfer = new w.DataTransfer();
+      transfer.items.add(dataUrlToFile(req.name, req.dataUrl));
+      target.el.dispatchEvent(new w.ClipboardEvent('paste', { bubbles: true, cancelable: true, composed: true, clipboardData: transfer }));
+    } catch (err) {
+      return fail('paste-failed: ' + errorText(err));
+    }
+    work.pasted += 1;
+    // 에디터가 사진 부품을 만들 때까지 잠깐 기다린다. 다 올라가는 것은 imagesFinish 에서 기다린다.
+    for (let i = 0; i < 25; i += 1) {
+      await sleep(400);
+      if (ours().length > before) return { ok: true, reason: null, appeared: true };
+    }
+    return { ok: true, reason: null, appeared: false };
+  }
+
+  async function imagesFinish(req: ImagesFinishRequest): Promise<ImagesFinishResult> {
+    const result: ImagesFinishResult = {
+      ok: false, reason: null, pasted: imageWork ? imageWork.pasted : 0, uploaded: 0, placed: 0, emptySlots: [], appended: 0, foundAfter: 0, log: [],
+    };
+    const work = imageWork;
+    const hit = findEditor();
+    if (!work || !hit) return { ...result, reason: work ? 'no-editor' : 'not-started' };
+    const ed = hit.editor;
+    const ours = () => allImages(readComponents(ed)).filter((image) => !work.already.has(String(image.id)));
+    const restoreBase = async () => {
+      try {
+        const returned = ed.setDocumentData(JSON.parse(work.baseJson));
+        if (returned && typeof returned.then === 'function') await returned;
+      } catch {
+        /* 되돌리지 못하면 사용자가 화면에서 확인한다 */
+      }
+    };
+
+    // 다 올라올 때까지 기다린다. 여기서 서두르면 사진이 깨진다. 더 올라오지 않으면 그만 기다린다.
+    const deadline = Date.now() + Math.max(1000, req.timeoutMs);
+    let best = 0;
+    let stalledSince = Date.now();
+    let images: any[] = [];
+    for (;;) {
+      images = ours();
+      const done = images.filter(isUploaded).length;
+      if (images.length >= work.pasted && done >= images.length && images.length > 0) break;
+      if (done > best) {
+        best = done;
+        stalledSince = Date.now();
+      }
+      if (Date.now() > deadline) {
+        result.log.push('기다리는 시간이 다 됐어요');
+        break;
+      }
+      if (Date.now() - stalledSince > 40_000) {
+        result.log.push('40초 동안 더 올라오지 않았어요');
+        break;
+      }
+      await sleep(500);
+    }
+
+    const uploaded = images.filter(isUploaded);
+    result.uploaded = uploaded.length;
+    result.log.push(`붙여넣음 ${work.pasted}장 · 에디터에 나타남 ${images.length}장 · 다 올라감 ${uploaded.length}장`);
+    imageWork = null;
+
+    if (uploaded.length === 0) {
+      // 한 장도 올라오지 않았다. 쪼개진 글을 붙여넣기 전의 모습으로 돌려놓는다.
+      await restoreBase();
+      return { ...result, reason: work.pasted > 0 ? 'no-upload' : 'nothing-pasted' };
+    }
+
+    // 붙여넣기 전의 문서에 사진만 끼워서 다시 넣는다.
+    const data = JSON.parse(work.baseJson);
+    const doc = unwrap(data);
+    const comps: any[] = doc.components;
+    const titleComp = comps.find((c) => c && c['@ctype'] === 'documentTitle') ?? null;
+    const placement = placeImages(comps.filter((c) => c !== titleComp), uploaded, req.slots, newId);
+    doc.components = [...(titleComp ? [titleComp] : []), ...placement.components];
+    result.placed = placement.placed;
+    result.emptySlots = placement.emptySlots;
+    result.appended = placement.appended.length;
+
+    try {
+      const returned = ed.setDocumentData(data);
+      if (returned && typeof returned.then === 'function') await returned;
+    } catch (err) {
+      await restoreBase();
+      return { ...result, reason: 'set-failed: ' + errorText(err) };
+    }
+    await sleep(500);
+
+    // 넣은 사진이 문서에 그대로 있는지 다시 읽어 확인한다.
+    const wanted = new Set(uploaded.map((image) => String(image.src)));
+    result.foundAfter = allImages(readComponents(ed)).filter((image) => wanted.has(String(image.src))).length;
+    result.ok = result.foundAfter === uploaded.length;
+    result.reason = result.ok ? null : 'mismatch';
+    return result;
+  }
+
+  /** 사진 넣기를 그만두고, 붙여넣기 전의 문서로 돌려놓는다. */
+  async function imagesCancel(): Promise<{ ok: boolean; reason: string | null }> {
+    const work = imageWork;
+    const hit = findEditor();
+    imageWork = null;
+    if (!work) return { ok: true, reason: null };
+    if (!hit) return { ok: false, reason: 'no-editor' };
+    try {
+      const returned = hit.editor.setDocumentData(JSON.parse(work.baseJson));
+      if (returned && typeof returned.then === 'function') await returned;
+    } catch (err) {
+      return { ok: false, reason: 'set-failed: ' + errorText(err) };
+    }
+    return { ok: true, reason: null };
+  }
+
+  w.__blogStudioEditor = { version: BRIDGE_VERSION, probe, fill, restore, imagesBegin, imagePaste, imagesFinish, imagesCancel };
 });

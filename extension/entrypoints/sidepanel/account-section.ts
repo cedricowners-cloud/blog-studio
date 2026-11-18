@@ -1,13 +1,19 @@
 import { describePack, validatePack } from '../../lib/prompts/pack';
-import { serverConfigured } from '../../lib/server/config';
+import { serverConfigured, WEB_URL } from '../../lib/server/config';
 import {
+  changePassword,
   clearPackSource,
+  loadLastEmail,
   loadPackSource,
+  loadPendingLogin,
   loadSession,
   login,
+  loginWithEmailCode,
   logout,
   markPackFromFile,
+  sendLoginEmail,
   syncPack,
+  takeLoginNote,
   type SyncResult,
 } from '../../lib/server/session';
 import { hasOutdatedPack, loadPack, onStoreChange, savePack } from '../../lib/store';
@@ -15,7 +21,12 @@ import { errorText, guarded, h, setMessage, type Tone } from './dom';
 
 // 로그인과 프롬프트 카드.
 // blog_studio 웹과 같은 계정으로 로그인하면, 내 프롬프트를 서버에서 받아 온다.
-// 비밀번호는 로그인할 때만 쓰고 저장하지 않는다. 서버를 쓸 수 없을 때는 묶음 파일로 불러올 수 있다.
+// 로그인하는 방법은 두 가지다.
+//   - 메일로: 로그인 메일을 받아 메일의 링크를 누른다. 웹에서 하던 것과 같다. 비밀번호가 필요 없다.
+//     링크를 누르면 확장의 배경 코드(background.ts)가 그 탭에서 로그인 정보를 받아 간다.
+//     그게 안 될 때는 링크의 주소나 메일의 6자리 코드를 직접 적을 수 있다.
+//   - 비밀번호로: 비밀번호를 아는 사람만. 로그인한 뒤에 이 카드에서 비밀번호를 새로 정할 수 있다.
+// 비밀번호는 요청에만 쓰고 저장하지 않는다. 서버를 쓸 수 없을 때는 묶음 파일로 불러올 수 있다.
 
 const day = (iso: string | undefined): string => (iso ? iso.slice(0, 10) : '');
 
@@ -43,18 +54,51 @@ export function createAccountCard(): HTMLElement {
   const configured = serverConfigured();
 
   const accountLine = h('p', { class: 'message' });
-  const email = h('input', { type: 'email', class: 'field', placeholder: '이메일', autocomplete: 'username' });
+  const email = h('input', { type: 'email', class: 'field', placeholder: 'blog_studio 웹에서 쓰는 이메일', autocomplete: 'username' });
+  // 메일로 로그인: 비밀번호가 없어도 된다
+  const mailButton = h('button', { type: 'button', class: 'primary' }, '메일로 로그인 링크 받기');
+  const waitingLine = h('p', { class: 'message' });
+  // 링크를 눌러도 로그인되지 않을 때 쓰는 방법: 링크의 주소나 6자리 코드를 직접 적는다
+  const codeInput = h('input', { type: 'text', class: 'field', placeholder: '메일의 링크 주소 (또는 6자리 코드)', autocomplete: 'off', spellcheck: 'false' });
+  const codeButton = h('button', { type: 'button' }, '이것으로 로그인');
+  const codeBox = h('details', { class: 'more' },
+    h('summary', null, '링크를 눌러도 로그인되지 않을 때'),
+    h('p', { class: 'hint small' }, '메일을 새로 받은 뒤, 링크를 누르지 말고 링크 위에서 오른쪽 버튼 → "링크 주소 복사"를 해서 아래에 붙여넣어 주세요. 메일에 6자리 코드가 있으면 그 코드를 적어도 돼요.'),
+    codeInput,
+    h('div', { class: 'buttons' }, codeButton),
+  );
+  // 비밀번호로 로그인: 비밀번호를 아는 사람만
   const password = h('input', { type: 'password', class: 'field', placeholder: '비밀번호', autocomplete: 'current-password' });
-  const loginButton = h('button', { type: 'button', class: 'primary' }, '로그인');
+  const loginButton = h('button', { type: 'button' }, '비밀번호로 로그인');
   const loginForm = h('div', null,
     email,
-    password,
-    h('div', { class: 'buttons' }, loginButton),
-    h('p', { class: 'hint small' }, 'blog_studio 웹에서 쓰는 이메일과 비밀번호예요. 메일 링크로만 로그인해 왔다면, 웹에서 비밀번호를 먼저 정해 주세요.'),
+    h('div', { class: 'buttons' }, mailButton),
+    waitingLine,
+    codeBox,
+    h('details', { class: 'more' },
+      h('summary', null, '비밀번호로 로그인하기'),
+      password,
+      h('div', { class: 'buttons' }, loginButton),
+      h('p', { class: 'hint small' }, '비밀번호를 모르면 위의 메일로 로그인한 뒤, 이 카드에서 비밀번호를 새로 정할 수 있어요. 크롬이 웹의 비밀번호를 저장해 뒀다면 chrome://password-manager 에서 볼 수도 있어요.'),
+    ),
   );
   const syncButton = h('button', { type: 'button', class: 'primary' }, '프롬프트 새로 받기');
   const logoutButton = h('button', { type: 'button' }, '로그아웃');
   const sessionButtons = h('div', { class: 'buttons' }, syncButton, logoutButton);
+
+  // 로그인한 뒤: 비밀번호 새로 정하기
+  const newPassword = h('input', { type: 'password', class: 'field', placeholder: '새 비밀번호 (8자 이상)', autocomplete: 'new-password' });
+  const newPasswordAgain = h('input', { type: 'password', class: 'field', placeholder: '새 비밀번호 한 번 더', autocomplete: 'new-password' });
+  const passwordButton = h('button', { type: 'button' }, '비밀번호 정하기');
+  const passwordMessage = h('p', { class: 'message' });
+  const passwordBox = h('details', { class: 'more' },
+    h('summary', null, '비밀번호 정하기 · 바꾸기'),
+    h('p', { class: 'hint small' }, '정해 두면 다음부터 비밀번호로도 로그인할 수 있어요. blog_studio 웹의 비밀번호 로그인에도 같은 비밀번호를 써요.'),
+    newPassword,
+    newPasswordAgain,
+    h('div', { class: 'buttons' }, passwordButton),
+    passwordMessage,
+  );
 
   const packLine = h('p', { class: 'message' });
   const message = h('p', { class: 'message' });
@@ -75,6 +119,26 @@ export function createAccountCard(): HTMLElement {
     else setMessage(accountLine, '로그인하지 않았어요.', 'warn');
     loginForm.hidden = !configured || !!session;
     sessionButtons.hidden = !session;
+    passwordBox.hidden = !session;
+
+    const pending = session ? null : await loadPendingLogin();
+    if (pending) {
+      const sentAt = pending.requested_at.slice(11, 16);
+      setMessage(
+        waitingLine,
+        WEB_URL
+          ? `메일의 링크를 기다리는 중이에요. 이 크롬에서 메일의 링크를 누르면 여기에 로그인돼요. (보낸 주소: ${pending.email})`
+          : '메일을 보냈어요. 아래 "링크를 눌러도 로그인되지 않을 때"에 링크의 주소를 붙여넣어 주세요.',
+        'warn',
+      );
+      waitingLine.title = `보낸 때 ${sentAt} (세계 표준시)`;
+    } else {
+      setMessage(waitingLine, '');
+    }
+
+    // 배경 코드가 링크로 로그인한 결과를 남겨 뒀으면 보여 준다.
+    const note = await takeLoginNote();
+    if (note) say(note.ok && session ? note.text + ' 프롬프트도 받아 올게요.' : note.text, note.ok ? 'ok' : 'bad');
 
     const pack = await loadPack();
     const source = await loadPackSource();
@@ -122,6 +186,63 @@ export function createAccountCard(): HTMLElement {
   password.addEventListener('keydown', (event) => {
     if (event.key === 'Enter') void submitLogin();
   });
+
+  mailButton.addEventListener('click', () =>
+    guarded(mailButton, (m) => say(m, 'bad'), async () => {
+      say('메일을 보내는 중이에요…');
+      try {
+        await sendLoginEmail(email.value);
+      } catch (err) {
+        say(errorText(err), 'bad');
+        return;
+      }
+      codeInput.value = '';
+      say(
+        WEB_URL
+          ? '로그인 메일을 보냈어요. 이 크롬에서 메일을 열고 링크를 눌러 주세요. 누르면 여기에 자동으로 로그인돼요. 메일은 1분에 한 번만 보낼 수 있어요.'
+          : '로그인 메일을 보냈어요. 메일은 1분에 한 번만 보낼 수 있어요.',
+        'ok',
+      );
+      await draw();
+    }),
+  );
+
+  const submitCode = () =>
+    guarded(codeButton, (m) => say(m, 'bad'), async () => {
+      say('로그인하는 중이에요…');
+      try {
+        await loginWithEmailCode(email.value, codeInput.value);
+      } catch (err) {
+        say(errorText(err), 'bad');
+        return;
+      }
+      codeInput.value = '';
+      codeBox.open = false;
+      await runSync(false);
+    });
+  codeButton.addEventListener('click', () => void submitCode());
+  codeInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') void submitCode();
+  });
+
+  passwordButton.addEventListener('click', () =>
+    guarded(passwordButton, (m) => setMessage(passwordMessage, m, 'bad'), async () => {
+      if (newPassword.value !== newPasswordAgain.value) {
+        setMessage(passwordMessage, '두 칸에 적은 비밀번호가 서로 달라요.', 'warn');
+        return;
+      }
+      try {
+        await changePassword(newPassword.value);
+      } catch (err) {
+        setMessage(passwordMessage, errorText(err), 'bad');
+        return;
+      } finally {
+        newPassword.value = '';
+        newPasswordAgain.value = '';
+      }
+      setMessage(passwordMessage, '비밀번호를 정했어요. 다음부터 이 비밀번호로도 로그인할 수 있어요.', 'ok');
+    }),
+  );
 
   syncButton.addEventListener('click', () =>
     guarded(syncButton, (m) => say(m, 'bad'), async () => {
@@ -172,8 +293,9 @@ export function createAccountCard(): HTMLElement {
     }),
   );
 
-  onStoreChange(['pack', 'session', 'packSource'], () => void draw());
+  onStoreChange(['pack', 'session', 'packSource', 'loginNote', 'pendingLogin'], () => void draw());
   void (async () => {
+    email.value = await loadLastEmail();
     await draw();
     // 창을 열 때마다, 로그인돼 있으면 서버에 새 프롬프트가 있는지 조용히 확인한다.
     if (configured && (await loadSession())) {
@@ -195,6 +317,7 @@ export function createAccountCard(): HTMLElement {
     sessionButtons,
     packLine,
     message,
+    passwordBox,
     h('details', { class: 'more' },
       h('summary', null, '서버를 쓸 수 없을 때: 파일로 불러오기'),
       h('p', { class: 'hint small' }, 'extension 폴더에서 npm run prompts 를 하면 prompt-pack/blog-studio-prompts.json 파일이 생겨요. 그 파일을 골라 주세요.'),

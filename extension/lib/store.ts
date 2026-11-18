@@ -30,6 +30,8 @@ const KEYS = {
   // 아래 둘은 lib/server/session.ts 가 다룬다. 바뀌었는지 듣는 데만 쓴다.
   session: 'serverSession',
   packSource: 'promptPackSource',
+  loginNote: 'serverLoginNote',
+  pendingLogin: 'serverPendingLogin',
 } as const;
 
 async function read<T>(key: string, fallback: T): Promise<T> {

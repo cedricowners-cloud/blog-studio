@@ -38,7 +38,7 @@
   };
 
   window.chrome = {
-    runtime: { id: 'preview', getManifest: () => ({ version: window.__PREVIEW_VERSION__ + ' (미리보기)' }) },
+    runtime: { id: 'preview', getURL: (path) => path, getManifest: () => ({ version: window.__PREVIEW_VERSION__ + ' (미리보기)' }) },
     storage: { local, onChanged: { addListener: (fn) => listeners.push(fn) } },
     tabs: {
       create: async ({ url }) => console.log('[미리보기] 새 탭을 열어요:', url),
@@ -118,6 +118,7 @@
   // 미리보기에서만 통하는 시험용 계정. 진짜 계정이 아니다.
   const PREVIEW_LOGIN = { email: 'preview@example.com', password: 'preview-only-pass' };
   const PREVIEW_USER = { id: '00000000-0000-4000-8000-000000000001', email: PREVIEW_LOGIN.email };
+  const PREVIEW_CODE = '246810';
   const token = () => ({ access_token: 'preview-access', refresh_token: 'preview-refresh', expires_in: 3600, user: PREVIEW_USER });
   const reply = (status, body) => new Response(body === null ? null : JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
@@ -131,6 +132,16 @@
     }
     if (pathname === '/auth/v1/token') return reply(200, token());
     if (pathname === '/auth/v1/logout') return reply(204, null);
+    // 메일로 로그인: 진짜 메일은 보내지 않는다. 시험용 코드는 PREVIEW_CODE, 시험용 링크는 token=preview-hash 다.
+    if (pathname === '/auth/v1/otp') {
+      return JSON.parse(init.body).email === PREVIEW_LOGIN.email ? reply(200, {}) : reply(422, { error_code: 'otp_disabled' });
+    }
+    if (pathname === '/auth/v1/verify') {
+      const body = JSON.parse(init.body);
+      const good = (body.email === PREVIEW_LOGIN.email && body.token === PREVIEW_CODE) || body.token_hash === 'preview-hash';
+      return good ? reply(200, token()) : reply(403, { error_code: 'otp_expired', msg: 'Token has expired or is invalid' });
+    }
+    if (pathname === '/auth/v1/user') return reply(200, PREVIEW_USER);
     const denied = params.get('server') === 'denied';
     if (pathname === '/rest/v1/prompt_access') return reply(200, denied ? [] : [{ user_id: PREVIEW_USER.id }]);
     if (pathname === '/rest/v1/prompt_packs') {
@@ -152,6 +163,24 @@
     }
     const body = JSON.parse(init.body);
     const last = JSON.stringify(body.contents ?? body.messages ?? '').slice(-4000);
+    // 카드 문구 다듬기: 섹션 수만큼 가짜 문구를 돌려준다.
+    const whole = JSON.stringify(body.contents ?? body.messages ?? '');
+    const cardCount = /섹션 데이터 \((\d+)개/.exec(whole);
+    if (cardCount) {
+      const cards = Array.from({ length: Number(cardCount[1]) }, (_, i) => ({ index: i + 1, lead: `AI가 다듬은 ${i + 1}번 핵심 문장입니다.`, body_text: `AI가 다듬은 ${i + 1}번 설명입니다. 문장을 끝까지 씁니다.` }));
+      return sseResponse(JSON.stringify({ cards }));
+    }
+    // 사진으로 리뷰 쓰기: 붙여 보낸 사진 수만큼 사진 자리를 넣은 가짜 글을 돌려준다. 3번 사진은 일부러 빠뜨린다.
+    const photoCount = (whole.match(/inline_data/g) ?? []).length;
+    if (photoCount > 0) {
+      const slots = Array.from({ length: photoCount }, (_, i) => i + 1).filter((n) => n !== 3);
+      const lines = ['[제목]', '가짜 리뷰 제목 하나: 2주 써 본 솔직한 후기', '가짜 리뷰 제목 둘', '가짜 리뷰 제목 셋', '[본문]', '내 돈으로 직접 산 제품이에요.'];
+      slots.forEach((n, i) => {
+        lines.push('', `[h2]가짜 소제목 ${i + 1}[/h2]`, `[IMG: 사진${n} - 가짜 AI가 본 ${n}번 사진]`, '사진에 보이는 것을 적은 가짜 문단입니다. 가격은 (확인 필요: 실제 가격) 입니다.');
+      });
+      lines.push('', '[IMG: 사진99 - 없는 번호]', '마무리 문단입니다.');
+      return sseResponse(lines.join('\n'));
+    }
     if (last.includes('[글 모음]')) {
       return sseResponse('- 문장 끝은 주로 ~해요, ~이에요로 맺어요.\n- 문장을 짧게 끊어 써요.\n- 느낌표와 이모지를 쓰지 않아요.');
     }

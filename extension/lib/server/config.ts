@@ -10,3 +10,9 @@ export const SERVER: ServerConfig = {
 };
 
 export const serverConfigured = (): boolean => !!SERVER.url && !!SERVER.key;
+
+/**
+ * blog_studio 웹의 주소. 메일의 로그인 링크를 누르면 서버가 이 주소로 보낸다.
+ * 확장은 그 탭의 주소에서 로그인 정보를 받아 간다. 비어 있으면 링크를 눌러서 로그인하는 기능이 꺼진다.
+ */
+export const WEB_URL: string = (env.WXT_WEB_URL ?? '').replace(/\/+$/, '');

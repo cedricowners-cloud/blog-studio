@@ -3,14 +3,17 @@ import { parseMarkup } from '../../lib/blocks/parse-markup';
 import type { Block, Palette } from '../../lib/blocks/types';
 import { copyBlocks } from '../../lib/clipboard';
 import { DEFAULT_PALETTE, normalizeHex, readableOnWhite, resolvePalette } from '../../lib/color';
-import { buildComponents } from '../../lib/editor/build';
-import { fillEditor, getNaverTab, restoreEditor } from '../../lib/editor/run';
-import type { FillResult } from '../../lib/editor/types';
-import { guarded, h, type Tone } from './dom';
+import { buildComponents, imagePlaceholderText } from '../../lib/editor/build';
+import { prepareImage, type PreparedImage } from '../../lib/editor/image-file';
+import { beginImages, cancelImages, fillEditor, finishImages, getNaverTab, pasteImage, restoreEditor } from '../../lib/editor/run';
+import type { FillResult, ImagesFinishResult } from '../../lib/editor/types';
+import { createCardMaker } from './cards-section';
+import { errorText, guarded, h, num, type Tone } from './dom';
 
 // 2·3단계(E2, E3) 화면: 본문을 네이버 글쓰기 화면에 채운다.
 // 본문은 직접 붙여넣거나, 글쓰기·SEO 화면에서 [채우기로 보내기]로 넘겨받는다.
 // 웹과 연결하는 E4 단계에서 "발행 대기 글 목록"이 더해진다.
+// 본문의 이미지 자리([IMG: 설명])마다 내 컴퓨터의 사진을 골라 두면, 글을 채운 뒤 그 자리에 넣는다.
 // 저장이나 발행은 하지 않는다.
 
 const SAMPLE_TITLE = '채우기 시험 글';
@@ -69,6 +72,11 @@ const REASONS: Record<string, string> = {
   'draft-prompt': '"작성 중인 글" 안내가 떠 있어요. 글쓰기 화면에서 먼저 선택해 주세요.',
   'unexpected-document': '에디터의 문서 모양이 예상과 달라요. [복사하기]를 써 주세요.',
   'no-backup': '되돌릴 사본이 없어요. 이 탭에서 채우기를 한 적이 없거나, 탭을 새로 고쳤어요.',
+  hidden: '글쓰기 탭이 화면에 보이지 않아요. 그 탭을 보고 있는 상태에서 다시 눌러 주세요. 사진은 보이는 탭에만 붙여넣을 수 있어요.',
+  'no-paste-target': '에디터에서 사진을 받는 곳을 찾지 못했어요. 네이버가 에디터를 바꿨을 수 있어요. 사진은 네이버 화면에서 직접 넣어 주세요.',
+  'no-upload': '사진이 네이버에 올라가지 않았어요. 글은 사진을 넣기 전의 모습으로 돌려놓았어요. 잠시 뒤에 [사진만 넣기]로 다시 해 주세요.',
+  'nothing-pasted': '사진을 한 장도 붙여넣지 못했어요. 글은 그대로예요.',
+  'not-started': '사진 넣기가 중간에 끊겼어요. [사진만 넣기]로 다시 해 주세요.',
 };
 
 function explain(reason: string | null): string {
@@ -128,11 +136,18 @@ function countKinds(blocks: Block[]): string {
 
 export interface FillSection {
   element: HTMLElement;
-  /** 글쓰기나 SEO 화면에서 만든 글을 넘겨받는다 */
-  setContent(title: string, body: string): void;
+  /**
+   * 글쓰기나 SEO 화면에서 만든 글을 넘겨받는다.
+   * images 가 있으면 자리 이름이 같은 사진 자리에 그 사진을 미리 골라 둔다 (사진 리뷰: "사진1" → 첫 번째 사진).
+   */
+  setContent(title: string, body: string, images?: Map<string, PreparedImage>): void;
 }
 
-export function createFillSection(): FillSection {
+export interface FillDeps {
+  openSettings: () => void;
+}
+
+export function createFillSection(deps: FillDeps): FillSection {
   const titleInput = h('input', { type: 'text', placeholder: '제목', class: 'field' });
   const bodyInput = h('textarea', { rows: '10', placeholder: '본문 (blog_studio 마크업)', class: 'field' });
   const status = h('p', { class: 'message' });
@@ -202,7 +217,214 @@ export function createFillSection(): FillSection {
   });
   refreshColorNotes();
 
+  // ───────── 사진: 본문의 이미지 자리마다 사진을 골라 둔다 ─────────
+  /** 이미지 자리의 순서(0부터) → 고른 사진 */
+  const chosen = new Map<number, PreparedImage>();
+  const imageBox = h('div', { class: 'notice' });
+  const imageMessage = h('p', { class: 'message' });
+
+  const imageSlots = () =>
+    parseMarkup(bodyInput.value).blocks.flatMap((block) => (block.kind === 'image' ? [block] : []));
+
+  async function pickFor(index: number, file: File | undefined): Promise<void> {
+    if (!file) return;
+    try {
+      chosen.set(index, await prepareImage(file, index + 1));
+      imageMessage.textContent = '';
+    } catch (err) {
+      imageMessage.textContent = errorText(err);
+      imageMessage.className = 'message bad';
+    }
+    drawImages();
+  }
+
+  function drawImages(): void {
+    const slots = imageSlots();
+    for (const index of [...chosen.keys()]) if (index >= slots.length) chosen.delete(index);
+    imageBox.replaceChildren();
+
+    const addSlot = h('button', { type: 'button' }, '사진 자리 더하기');
+    addSlot.addEventListener('click', () => {
+      bodyInput.value = bodyInput.value.replace(/\s*$/, '') + '\n\n[IMG: 사진]\n';
+      drawImages();
+    });
+
+    if (slots.length === 0) {
+      imageBox.append(
+        h('p', { class: 'label' }, '사진'),
+        h('p', { class: 'hint small' }, '본문에 [IMG: 설명] 줄을 넣으면 그 자리에 사진을 넣을 수 있어요. 지금은 사진 자리가 없어요.'),
+        h('div', { class: 'buttons' }, addSlot),
+        imageMessage,
+      );
+      return;
+    }
+
+    const many = h('input', { type: 'file', accept: 'image/*', multiple: 'multiple' });
+    many.hidden = true;
+    const manyButton = h('button', { type: 'button' }, '여러 장 한꺼번에 고르기');
+    manyButton.addEventListener('click', () => many.click());
+    many.addEventListener('change', () => {
+      void (async () => {
+        const files = [...(many.files ?? [])];
+        many.value = '';
+        // 아직 사진이 없는 자리부터 순서대로 채운다.
+        const empty = slots.map((_, i) => i).filter((i) => !chosen.has(i));
+        for (const [n, file] of files.entries()) {
+          const index = empty[n];
+          if (index === undefined) break;
+          await pickFor(index, file);
+        }
+      })();
+    });
+
+    const rows = slots.map((slot, index) => {
+      const image = chosen.get(index);
+      const input = h('input', { type: 'file', accept: 'image/*' });
+      input.hidden = true;
+      input.addEventListener('change', () => {
+        const file = input.files?.[0];
+        input.value = '';
+        void pickFor(index, file);
+      });
+      const pick = h('button', { type: 'button' }, image ? '바꾸기' : '사진 고르기');
+      pick.addEventListener('click', () => input.click());
+      const remove = h('button', { type: 'button', class: 'link muted' }, '빼기');
+      remove.addEventListener('click', () => {
+        chosen.delete(index);
+        drawImages();
+      });
+      const thumb = h('div', { class: 'thumb' });
+      if (image) {
+        const preview = h('img', { alt: '' });
+        preview.src = image.dataUrl;
+        thumb.append(preview);
+      }
+      const label = slot.alt ? `${slot.slot} - ${slot.alt}` : slot.slot;
+      return h('div', { class: 'slot-row' },
+        thumb,
+        h('div', { class: 'slot-text' },
+          h('span', null, `${index + 1}. ${label}`),
+          h('span', { class: 'hint small' },
+            image ? `${image.originalName} · ${image.width}×${image.height} · ${num(Math.round(image.bytes / 1024))}KB` : '사진을 고르지 않았어요. 자리는 글자로 남아요.',
+          ),
+        ),
+        h('div', { class: 'slot-buttons' }, pick, image ? remove : null, input),
+      );
+    });
+
+    imageBox.append(
+      h('p', { class: 'label' }, `사진 (자리 ${slots.length}곳 · 고른 사진 ${chosen.size}장)`),
+      h('p', { class: 'hint small' }, '자리마다 내 컴퓨터의 사진을 골라 두면, 글을 채운 뒤 그 자리에 넣어요. 큰 사진은 긴 쪽 2000픽셀로 줄이고, 촬영 위치 같은 정보는 빼고 올려요.'),
+      ...rows,
+      h('div', { class: 'buttons' }, manyButton, addSlot, many),
+      imageMessage,
+    );
+  }
+
+  /**
+   * 카드를 글에 넣는다: 카드 자리가 들어간 본문으로 바꾸고, 자리 이름이 같은 곳에 카드 그림을 둔다.
+   * 본문에 자리가 새로 끼어들면 자리의 순서가 밀린다. 먼저 골라 둔 사진은 같은 자리를 다시 찾아 준다.
+   */
+  function applyCards(body: string, images: Map<string, PreparedImage>): void {
+    const keyOf = (slot: { slot: string; alt: string }) => `${slot.slot}|${slot.alt}`;
+    const occurrence = (list: { slot: string; alt: string }[], index: number) =>
+      list.slice(0, index).filter((slot) => keyOf(slot) === keyOf(list[index] as { slot: string; alt: string })).length;
+
+    const before = imageSlots();
+    const kept = [...chosen.entries()].flatMap(([index, image]) => {
+      const slot = before[index];
+      return slot ? [{ key: keyOf(slot), nth: occurrence(before, index), image }] : [];
+    });
+
+    bodyInput.value = body;
+    chosen.clear();
+    const after = imageSlots();
+    after.forEach((slot, index) => {
+      const card = images.get(slot.slot);
+      if (card) {
+        chosen.set(index, card);
+        return;
+      }
+      const old = kept.find((item) => item.key === keyOf(slot) && item.nth === occurrence(after, index));
+      if (old) chosen.set(index, old.image);
+    });
+    drawImages();
+    imageBox.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+
+  const cardMaker = createCardMaker({
+    getTitle: () => titleInput.value,
+    getBody: () => bodyInput.value,
+    getBrandColor: () => palette.positive,
+    apply: applyCards,
+    openSettings: deps.openSettings,
+  });
+
+  let slotTimer: ReturnType<typeof setTimeout> | undefined;
+  bodyInput.addEventListener('input', () => {
+    clearTimeout(slotTimer);
+    slotTimer = setTimeout(drawImages, 400);
+  });
+
+  function describeImages(result: ImagesFinishResult, wanted: number): { text: string; tone: Tone } {
+    if (result.ok && result.placed === wanted && result.appended === 0) {
+      return { text: `사진 ${wanted}장을 자리에 넣었어요.`, tone: 'ok' };
+    }
+    const parts = [`사진 ${wanted}장 중 ${result.placed}장을 자리에 넣었어요.`];
+    if (result.uploaded < wanted) parts.push(`${wanted - result.uploaded}장은 네이버에 올라가지 않았어요.`);
+    if (result.appended > 0) parts.push(`${result.appended}장은 자리를 찾지 못해 글 끝에 붙였어요.`);
+    if (!result.ok && result.reason === 'mismatch') parts.push('넣은 뒤 다시 읽어 보니 사진 수가 달라요. 화면에서 확인해 주세요.');
+    return { text: parts.join(' '), tone: 'warn' };
+  }
+
+  /**
+   * 고른 사진을 글쓰기 화면의 이미지 자리에 넣는다. 글이 먼저 채워져 있어야 한다 (자리가 글자로 들어가 있어야 한다).
+   * 넣을 사진이 없으면 아무 일도 하지 않고 null 을 돌려준다.
+   */
+  async function runImages(tabId: number): Promise<{ text: string; tone: Tone } | null> {
+    const slots = imageSlots();
+    const picks = slots.map((_, index) => chosen.get(index)).filter((image): image is PreparedImage => !!image);
+    if (picks.length === 0) return null;
+
+    setStatus('사진을 넣을 준비를 하는 중이에요…');
+    const start = await beginImages(tabId);
+    if (!start) return { text: '글쓰기 화면에서 응답이 없어요. 탭을 새로 고친 뒤 다시 해 주세요.', tone: 'bad' };
+    if (!start.ok) return { text: explain(start.reason), tone: 'bad' };
+
+    const problems: string[] = [];
+    try {
+      for (const [n, image] of picks.entries()) {
+        setStatus(`사진을 올리는 중이에요 (${n + 1}/${picks.length}). 글쓰기 탭을 보고 있어 주세요.`);
+        const pasted = await pasteImage(tabId, start.frameId, { name: image.name, dataUrl: image.dataUrl });
+        if (!pasted || !pasted.ok) {
+          problems.push(`${image.originalName}: ${explain(pasted ? pasted.reason : 'no-editor')}`);
+          if (pasted?.reason === 'hidden') break;
+        }
+      }
+      setStatus('네이버에 사진이 올라가기를 기다리는 중이에요. 글쓰기 탭을 보고 있어 주세요.');
+      const finished = await finishImages(tabId, start.frameId, {
+        slots: slots.map((slot, index) => ({ text: imagePlaceholderText(slot.slot, slot.alt), fileName: chosen.get(index)?.name ?? null })),
+        timeoutMs: 60_000 + picks.length * 30_000,
+      });
+      if (!finished) return { text: '글쓰기 화면에서 응답이 없어요. 화면에서 사진이 들어갔는지 확인해 주세요.', tone: 'bad' };
+
+      report.append(
+        h('details', null,
+          h('summary', null, '사진 넣기 기록'),
+          h('p', { class: 'mono' }, [`붙여넣기를 받은 곳: ${start.target}`, ...finished.log, ...problems].join(' / ')),
+        ),
+      );
+      if (finished.reason && finished.reason !== 'mismatch') return { text: explain(finished.reason), tone: 'bad' };
+      return describeImages(finished, picks.length);
+    } catch (err) {
+      // 중간에 끊기면 쪼개진 글을 붙여넣기 전의 모습으로 돌려놓는다.
+      await cancelImages(tabId, start.frameId).catch(() => {});
+      return { text: '사진을 넣다가 멈췄어요. 글은 사진을 넣기 전의 모습으로 돌려놓았어요. (' + errorText(err) + ')', tone: 'bad' };
+    }
+  }
+
   const sampleButton = h('button', { type: 'button' }, '시험 글 불러오기');
+  const imagesButton = h('button', { type: 'button' }, '사진만 넣기');
   const fillButton = h('button', { type: 'button', class: 'primary' }, '채우기');
   const copyButton = h('button', { type: 'button' }, '복사하기');
   const restoreButton = h('button', { type: 'button' }, '채우기 전으로 되돌리기');
@@ -315,13 +537,38 @@ export function createFillSection(): FillSection {
     }
 
     showReport(result, parsed.blocks, parsed.warnings);
-    if (result.ok) setStatus(`채웠어요. 넣은 것과 다시 읽은 것이 같아요 (부품 ${result.sentCount}개).`, 'ok');
-    else setStatus('채웠지만 다른 곳이 있어요. 아래를 확인해 주세요.', 'warn');
+    if (!result.ok) {
+      setStatus('채웠지만 다른 곳이 있어요. 아래를 확인해 주세요. 사진은 넣지 않았어요.', 'warn');
+      return;
+    }
+    const filled = `글을 채웠어요 (부품 ${result.sentCount}개).`;
+    const images = await runImages(tab.id);
+    if (!images) setStatus(filled + ' 넣은 것과 다시 읽은 것이 같아요.', 'ok');
+    else setStatus(`${filled} ${images.text}`, images.tone);
   }
+
+  imagesButton.addEventListener('click', () =>
+    guarded(imagesButton, (m) => setStatus(m, 'bad'), async () => {
+      if (chosen.size === 0) {
+        setStatus('넣을 사진을 먼저 골라 주세요.', 'warn');
+        return;
+      }
+      const tab = await getNaverTab();
+      if (!tab) {
+        setStatus('지금 보고 있는 탭이 네이버 블로그가 아니에요. 글쓰기 화면을 연 탭에서 눌러 주세요.', 'warn');
+        return;
+      }
+      report.replaceChildren();
+      const images = await runImages(tab.id);
+      if (images) setStatus(images.text, images.tone);
+    }),
+  );
 
   sampleButton.addEventListener('click', () => {
     titleInput.value = SAMPLE_TITLE;
     bodyInput.value = SAMPLE_BODY;
+    chosen.clear();
+    drawImages();
     report.replaceChildren();
     setStatus('시험 글을 불러왔어요. 글쓰기 화면을 연 탭에서 [채우기]를 눌러 주세요.');
   });
@@ -354,25 +601,44 @@ export function createFillSection(): FillSection {
   );
 
   setStatus('본문을 붙여넣거나 [시험 글 불러오기]를 눌러 주세요.');
+  drawImages();
 
   const element = h('section', { class: 'card' },
     h('h2', null, '글 채우기'),
     h('p', { class: 'hint' }, '네이버 글쓰기 화면에 글을 채워요. 저장이나 발행은 하지 않아요. 발행은 직접 눌러 주세요.'),
     titleInput,
     bodyInput,
+    imageBox,
+    cardMaker,
     colorSettings,
-    h('div', { class: 'buttons' }, sampleButton, fillButton, copyButton, restoreButton),
+    h('div', { class: 'buttons' }, sampleButton, fillButton, imagesButton, copyButton, restoreButton),
     status,
     report,
   );
 
   return {
     element,
-    setContent(title, body) {
+    setContent(title, body, images) {
       titleInput.value = title;
       bodyInput.value = body;
+      chosen.clear();
+      let placed = 0;
+      if (images) {
+        imageSlots().forEach((slot, index) => {
+          const image = images.get(slot.slot);
+          if (!image) return;
+          chosen.set(index, image);
+          placed += 1;
+        });
+      }
+      drawImages();
       report.replaceChildren();
-      setStatus('글을 가져왔어요. 네이버 글쓰기 화면을 연 탭에서 [채우기]를 눌러 주세요.', 'ok');
+      setStatus(
+        placed > 0
+          ? `글과 사진 ${placed}장을 가져왔어요. 네이버 글쓰기 화면을 연 탭에서 [채우기]를 누르면 글을 채우고 사진을 자리에 넣어요.`
+          : '글을 가져왔어요. 네이버 글쓰기 화면을 연 탭에서 [채우기]를 눌러 주세요.',
+        'ok',
+      );
     },
   };
 }

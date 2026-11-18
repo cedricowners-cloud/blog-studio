@@ -1,7 +1,23 @@
 // 서버(Supabase)와 주고받는 코드를 가짜 서버로 시험한다. 진짜 서버는 부르지 않는다.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { fetchPack, isExpiring, refreshSession, ServerError, signIn, signOut, type ServerConfig, type Session } from '../lib/server/client.ts';
+import {
+  fetchPack,
+  fetchUser,
+  isExpiring,
+  linkErrorFromUrl,
+  parseLoginInput,
+  refreshSession,
+  requestLoginEmail,
+  ServerError,
+  setPassword,
+  signIn,
+  signInWithEmailCode,
+  signOut,
+  tokensFromUrl,
+  type ServerConfig,
+  type Session,
+} from '../lib/server/client.ts';
 
 interface Call {
   url: string;
@@ -152,4 +168,138 @@ test('서버: 묶음이 안 보이면 왜 그런지 알아본다', async () => {
   await assert.rejects(() => fetchPack(expired.cfg, session), (err: unknown) => err instanceof ServerError && err.kind === 'expired');
   const failing = fakeServer([json(500, {})]);
   await assert.rejects(() => fetchPack(failing.cfg, session), (err: unknown) => err instanceof ServerError && err.kind === 'other');
+});
+
+// ───────────── 메일로 로그인, 비밀번호 정하기 ─────────────
+
+test('서버: 로그인 메일을 요청한다 (새 계정은 만들지 않는다)', async () => {
+  const { cfg, calls } = fakeServer([json(200, {})]);
+  await requestLoginEmail(cfg, ' me@example.com ');
+  const call = calls[0] as Call;
+  assert.equal(call.url, 'https://example.supabase.co/auth/v1/otp');
+  assert.equal(call.method, 'POST');
+  assert.equal(call.headers.apikey, 'public-key');
+  assert.deepEqual(call.body, { email: 'me@example.com', create_user: false });
+
+  const limited = fakeServer([json(429, { error_code: 'over_email_send_rate_limit' })]);
+  await assert.rejects(() => requestLoginEmail(limited.cfg, 'me@example.com'), (err: unknown) => err instanceof ServerError && err.kind === 'rate');
+  const unknown = fakeServer([json(422, { error_code: 'otp_disabled', msg: 'Signups not allowed for otp' })]);
+  await assert.rejects(() => requestLoginEmail(unknown.cfg, 'nobody@example.com'), (err: unknown) => err instanceof ServerError && err.kind === 'credentials');
+  const untouched = fakeServer([]);
+  await assert.rejects(() => requestLoginEmail(untouched.cfg, '  '), (err: unknown) => err instanceof ServerError && err.kind === 'credentials');
+  assert.equal(untouched.calls.length, 0);
+});
+
+test('서버: 적은 것이 코드인지 링크 주소인지 알아본다', () => {
+  assert.deepEqual(parseLoginInput(' 123456 '), { kind: 'code', token: '123456' });
+  assert.deepEqual(parseLoginInput('123 456'), { kind: 'code', token: '123456' });
+  assert.deepEqual(parseLoginInput('12345678'), { kind: 'code', token: '12345678' });
+  assert.deepEqual(
+    parseLoginInput('https://example.supabase.co/auth/v1/verify?token=abc123hash&type=magiclink&redirect_to=https://site.example'),
+    { kind: 'link', token_hash: 'abc123hash', type: 'magiclink' },
+  );
+  assert.deepEqual(parseLoginInput('https://site.example/auth/confirm?token_hash=pkce_zzz&type=email'), { kind: 'link', token_hash: 'pkce_zzz', type: 'email' });
+  // 모르는 종류는 메일 로그인으로 본다
+  assert.deepEqual(parseLoginInput('https://example.supabase.co/auth/v1/verify?token=h&type=strange'), { kind: 'link', token_hash: 'h', type: 'email' });
+  assert.equal(parseLoginInput('12345'), null);
+  assert.equal(parseLoginInput('abcdef'), null);
+  assert.equal(parseLoginInput('https://site.example/login'), null);
+  assert.equal(parseLoginInput(''), null);
+});
+
+test('서버: 메일로 받은 6자리 코드로 로그인한다', async () => {
+  const { cfg, calls } = fakeServer([json(200, tokenBody())]);
+  const got = await signInWithEmailCode(cfg, ' me@example.com ', ' 123456 ', NOW);
+  assert.equal(got.access_token, 'access-2');
+  assert.equal(got.user.email, 'me@example.com');
+  const call = calls[0] as Call;
+  assert.equal(call.url, 'https://example.supabase.co/auth/v1/verify');
+  assert.ok(!('Authorization' in call.headers));
+  assert.deepEqual(call.body, { type: 'email', email: 'me@example.com', token: '123456' });
+});
+
+test('서버: 메일의 링크 주소로도 로그인한다', async () => {
+  const { cfg, calls } = fakeServer([json(200, tokenBody({ user: { id: session.user.id } }))]);
+  const link = 'https://example.supabase.co/auth/v1/verify?token=abc123hash&type=magiclink&redirect_to=https://site.example';
+  const got = await signInWithEmailCode(cfg, 'me@example.com', link, NOW);
+  assert.deepEqual((calls[0] as Call).body, { type: 'magiclink', token_hash: 'abc123hash' });
+  assert.equal(got.user.email, 'me@example.com', '서버가 이메일을 안 주면 적은 이메일을 쓴다');
+});
+
+test('서버: 코드나 링크가 틀리면 알맞게 알려 준다', async () => {
+  const wrongCode = fakeServer([json(403, { error_code: 'otp_expired', msg: 'Token has expired or is invalid' })]);
+  await assert.rejects(() => signInWithEmailCode(wrongCode.cfg, 'me@example.com', '000000'), /코드가 맞지 않거나/);
+  const usedLink = fakeServer([json(403, { error_code: 'otp_expired' })]);
+  await assert.rejects(() => signInWithEmailCode(usedLink.cfg, 'me@example.com', 'https://x.supabase.co/auth/v1/verify?token=h&type=magiclink'), /링크는 이미 썼거나/);
+  const limited = fakeServer([json(429, {})]);
+  await assert.rejects(() => signInWithEmailCode(limited.cfg, 'me@example.com', '123456'), (err: unknown) => err instanceof ServerError && err.kind === 'rate');
+  // 알아볼 수 없는 글이나 빈 이메일이면 서버를 부르지 않는다
+  const untouched = fakeServer([]);
+  await assert.rejects(() => signInWithEmailCode(untouched.cfg, 'me@example.com', '코드 아님'), (err: unknown) => err instanceof ServerError && err.kind === 'credentials');
+  await assert.rejects(() => signInWithEmailCode(untouched.cfg, ' ', '123456'), (err: unknown) => err instanceof ServerError && err.kind === 'credentials');
+  assert.equal(untouched.calls.length, 0);
+});
+
+test('서버: 비밀번호를 새로 정한다 (오류 글에 비밀번호를 넣지 않는다)', async () => {
+  const { cfg, calls } = fakeServer([json(200, { id: session.user.id })]);
+  await setPassword(cfg, session, 'new-test-password');
+  const call = calls[0] as Call;
+  assert.equal(call.url, 'https://example.supabase.co/auth/v1/user');
+  assert.equal(call.method, 'PUT');
+  assert.equal(call.headers.Authorization, 'Bearer access-1');
+  assert.deepEqual(call.body, { password: 'new-test-password' });
+
+  const short = fakeServer([]);
+  await assert.rejects(() => setPassword(short.cfg, session, '1234567'), /8자 이상/);
+  assert.equal(short.calls.length, 0);
+
+  const cases: [number, Record<string, unknown>, RegExp][] = [
+    [422, { error_code: 'weak_password' }, /너무 쉬워요/],
+    [422, { error_code: 'same_password' }, /같아요/],
+    [400, { error_code: 'reauthentication_needed' }, /보안 설정/],
+    [401, {}, /로그인이 풀렸어요/],
+    [500, {}, /정하지 못했어요/],
+  ];
+  for (const [status, body, expected] of cases) {
+    const failing = fakeServer([json(status, body)]);
+    await assert.rejects(
+      () => setPassword(failing.cfg, session, 'secret-password-123'),
+      (err: unknown) => {
+        assert.ok(err instanceof ServerError);
+        assert.match(err.message, expected);
+        assert.ok(!err.message.includes('secret-password-123'));
+        return true;
+      },
+    );
+  }
+});
+
+test('서버: 링크를 누른 뒤 도착한 주소에서 로그인 정보를 꺼낸다', () => {
+  const hash = 'access_token=aaa.bbb.ccc&expires_at=1900000000&expires_in=3600&refresh_token=rrr&token_type=bearer&type=magiclink';
+  assert.deepEqual(tokensFromUrl('https://blog.example.com/#' + hash), { access_token: 'aaa.bbb.ccc', refresh_token: 'rrr', expires_at: 1900000000 });
+  // 웹이 로그인 화면으로 넘겨도 # 뒤는 그대로 따라온다
+  assert.deepEqual(tokensFromUrl('https://blog.example.com/login?redirect=%2F#' + hash)?.refresh_token, 'rrr');
+  assert.equal(tokensFromUrl('https://blog.example.com/#access_token=a&refresh_token=r')?.expires_at, null);
+  assert.equal(tokensFromUrl('https://blog.example.com/#access_token=only'), null);
+  assert.equal(tokensFromUrl('https://blog.example.com/?access_token=a&refresh_token=r'), null, '# 뒤에 있는 것만 받는다');
+  assert.equal(tokensFromUrl('https://blog.example.com/login'), null);
+  assert.equal(tokensFromUrl('주소가 아님'), null);
+
+  assert.equal(linkErrorFromUrl('https://blog.example.com/#error=access_denied&error_code=otp_expired&error_description=x'), 'otp_expired');
+  assert.equal(linkErrorFromUrl('https://blog.example.com/#error=server_error'), 'server_error');
+  assert.equal(linkErrorFromUrl('https://blog.example.com/#' + hash), null);
+  assert.equal(linkErrorFromUrl('주소가 아님'), null);
+});
+
+test('서버: 로그인 정보가 누구 것인지 묻는다', async () => {
+  const { cfg, calls } = fakeServer([json(200, { id: session.user.id, email: 'me@example.com', role: 'authenticated' })]);
+  assert.deepEqual(await fetchUser(cfg, 'some-access-token'), { id: session.user.id, email: 'me@example.com' });
+  assert.equal((calls[0] as Call).url, 'https://example.supabase.co/auth/v1/user');
+  assert.equal((calls[0] as Call).method, 'GET');
+  assert.equal((calls[0] as Call).headers.Authorization, 'Bearer some-access-token');
+
+  const bad = fakeServer([json(401, { message: 'invalid JWT' })]);
+  await assert.rejects(() => fetchUser(bad.cfg, 'x'), (err: unknown) => err instanceof ServerError && err.kind === 'expired');
+  const odd = fakeServer([json(200, { email: 'me@example.com' })]);
+  await assert.rejects(() => fetchUser(odd.cfg, 'x'), (err: unknown) => err instanceof ServerError && err.kind === 'other');
 });

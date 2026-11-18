@@ -1,7 +1,7 @@
 {
   "name": "blog-studio-extension",
   "private": true,
-  "version": "0.5.0",
+  "version": "0.9.0",
   "description": "blog_studio 크롬 확장: 내 AI 키로 글을 만들고, 네이버 블로그 글쓰기 화면에 채운다",
   "type": "module",
   "scripts": {

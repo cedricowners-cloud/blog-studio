@@ -8,10 +8,11 @@
 //   - web/lib/ontology/prompt-builder.ts 안의 출력 형식 안내
 //   - scripts/glue.ts               그 밖의 글 조각 (웹 코드에서 옮겨 적은 것)
 //   - scripts/extension-prompts.ts  확장에만 있는 글 (한 번에 돌릴 때의 답, 내 말투)
+//   - web/lib/cards-parser.ts       카드 문구를 AI로 다듬는 프롬프트
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { GLUE_KEYS, PACK_FORMAT, validatePack, type PackSeoStep, type PromptPack, type SeoPlatform } from '../lib/prompts/pack.ts';
+import { GLUE_KEYS, OPTIONAL_GLUE_KEYS, PACK_FORMAT, validatePack, type PackSeoStep, type PromptPack, type SeoPlatform } from '../lib/prompts/pack.ts';
 import { AUTO_REPLIES, EXTENSION_GLUE } from './extension-prompts.ts';
 import { COMMON_FILE, GLUE, METHODS } from './glue.ts';
 
@@ -44,6 +45,45 @@ export function extractTemplateConst(source: string, name: string): string {
   throw new Error(`${name} 의 끝을 찾지 못했어요.`);
 }
 
+/**
+ * 소스 파일에서 \`...\` 안의 글자를 꺼내되, 안에 들어 있는 식(\${...})을 {{이름}} 자리로 바꾼다.
+ * 어떤 식을 어떤 이름으로 바꿀지는 slots 로 정한다. 모르는 식이 있으면 멈춘다 (웹 코드가 바뀐 것이다).
+ */
+export function extractTemplateWithSlots(source: string, opener: string, slots: Record<string, string>): string {
+  const start = source.indexOf(opener);
+  if (start < 0) throw new Error(`소스에서 "${opener}" 를 찾지 못했어요.`);
+  let out = '';
+  let i = start + opener.length;
+  while (i < source.length) {
+    const ch = source[i] as string;
+    if (ch === '\\') {
+      const next = source[i + 1] ?? '';
+      out += next === 'n' ? '\n' : next === 't' ? '\t' : next;
+      i += 2;
+      continue;
+    }
+    if (ch === '`') return out;
+    if (ch === '$' && source[i + 1] === '{') {
+      let depth = 1;
+      let j = i + 2;
+      while (j < source.length && depth > 0) {
+        if (source[j] === '{') depth += 1;
+        else if (source[j] === '}') depth -= 1;
+        j += 1;
+      }
+      const expression = source.slice(i + 2, j - 1).trim();
+      const name = slots[expression];
+      if (!name) throw new Error(`"${opener}" 안에 모르는 식이 있어요: ${expression}`);
+      out += `{{${name}}}`;
+      i = j;
+      continue;
+    }
+    out += ch;
+    i += 1;
+  }
+  throw new Error(`"${opener}" 의 끝을 찾지 못했어요.`);
+}
+
 interface WebSeoModule {
   SEO_WORKFLOW: PackSeoStep[];
   PLATFORM_LABELS: Record<SeoPlatform, string>;
@@ -60,6 +100,16 @@ export async function buildPack(repoRoot: string = REPO_ROOT): Promise<PromptPac
 
   const builderSource = await readFile(join(repoRoot, 'web', 'lib', 'ontology', 'prompt-builder.ts'), 'utf-8');
   const outputFormat = extractTemplateConst(builderSource, 'OUTPUT_FORMAT_INSTRUCTION');
+
+  // 카드 문구를 AI로 다듬는 프롬프트는 웹의 cards-parser.ts 안에 있다. 그대로 꺼내 쓴다.
+  const cardsSource = await readFile(join(repoRoot, 'web', 'lib', 'cards-parser.ts'), 'utf-8');
+  const cardsRewrite = extractTemplateWithSlots(cardsSource, 'const prompt = `', {
+    title: 'title',
+    total: 'total',
+    expectedIndexes: 'indexes',
+    'JSON.stringify(payload, null, 2)': 'payload',
+    exampleItems: 'examples',
+  }).trim();
 
   const seoModule = (await import(pathToFileURL(join(repoRoot, 'web', 'lib', 'seo-workflow.ts')).href)) as WebSeoModule;
   const steps: PackSeoStep[] = seoModule.SEO_WORKFLOW.map((s) => ({
@@ -79,13 +129,14 @@ export async function buildPack(repoRoot: string = REPO_ROOT): Promise<PromptPac
     built_at: new Date().toISOString(),
     source: 'blog_studio/web (prompts, lib/seo-workflow.ts, lib/ontology)',
     methods: { common, items },
-    glue: { ...GLUE, ...EXTENSION_GLUE, output_format: outputFormat },
+    glue: { ...GLUE, ...EXTENSION_GLUE, output_format: outputFormat, 'cards.rewrite': cardsRewrite },
     seo: { steps, platform_labels: { ...seoModule.PLATFORM_LABELS }, auto_replies: { ...AUTO_REPLIES } },
   };
 
   const check = validatePack(JSON.parse(JSON.stringify(pack)));
   if (!check.ok) throw new Error('만든 묶음이 형식에 맞지 않아요: ' + check.errors.join(' / '));
-  const extra = Object.keys(pack.glue).filter((key) => !(GLUE_KEYS as readonly string[]).includes(key));
+  const known: readonly string[] = [...GLUE_KEYS, ...OPTIONAL_GLUE_KEYS];
+  const extra = Object.keys(pack.glue).filter((key) => !known.includes(key));
   if (extra.length > 0) throw new Error('확장이 모르는 글 조각이 있어요: ' + extra.join(', '));
   // 대신 보내는 답은 AI가 되묻는 단계에만 둔다. 없는 단계 번호를 적었으면 알려 준다.
   for (const id of Object.keys(pack.seo.auto_replies)) {

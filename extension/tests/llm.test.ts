@@ -350,3 +350,73 @@ test('한 번에 쓸 길이: 모델의 한도를 알면 그 안에서, 모르면
   assert.equal(resolveMaxTokens(32000, 16000, undefined), 16000);
   assert.equal(pickDefaultModel('gemini', []), '');
 });
+
+// ── 사진을 같이 보내기 ──
+
+const PHOTOS = [
+  { mime: 'image/jpeg', data: 'QUJD', label: '사진 1' },
+  { mime: 'image/png', data: 'REVG', label: '사진 2' },
+];
+
+test('사진 보내기: Claude 는 사진마다 이름표를 먼저 놓고, 글을 맨 끝에 놓는다', async () => {
+  const { fetchImpl, calls } = fakeFetch([sse(anthropicStream(['리뷰']))]);
+  const result = await llmGenerate('이 사진으로 글을 써 줘', opts({ provider: 'anthropic', fetchImpl }), PHOTOS);
+  assert.equal(result.text, '리뷰');
+  assert.deepEqual(calls[0]!.body.messages, [
+    {
+      role: 'user',
+      content: [
+        { type: 'text', text: '사진 1' },
+        { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: 'QUJD' } },
+        { type: 'text', text: '사진 2' },
+        { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'REVG' } },
+        { type: 'text', text: '이 사진으로 글을 써 줘' },
+      ],
+    },
+  ]);
+});
+
+test('사진 보내기: GPT 는 data 주소로 보낸다', async () => {
+  const { fetchImpl, calls } = fakeFetch([sse(openaiStream(['리뷰']))]);
+  await llmGenerate('글을 써 줘', opts({ provider: 'openai', fetchImpl }), PHOTOS);
+  assert.deepEqual(calls[0]!.body.messages, [
+    {
+      role: 'user',
+      content: [
+        { type: 'text', text: '사진 1' },
+        { type: 'image_url', image_url: { url: 'data:image/jpeg;base64,QUJD' } },
+        { type: 'text', text: '사진 2' },
+        { type: 'image_url', image_url: { url: 'data:image/png;base64,REVG' } },
+        { type: 'text', text: '글을 써 줘' },
+      ],
+    },
+  ]);
+});
+
+test('사진 보내기: Gemini 는 inline_data 로 보낸다', async () => {
+  const gemini = () => sse([`data: ${JSON.stringify({ candidates: [{ content: { parts: [{ text: '리뷰' }] }, finishReason: 'STOP' }], usageMetadata: { promptTokenCount: 1, candidatesTokenCount: 1 } })}`]);
+  const { fetchImpl, calls } = fakeFetch([gemini(), gemini()]);
+  await llmGenerate('글을 써 줘', opts({ provider: 'gemini', model: 'gemini-9-pro', fetchImpl }), PHOTOS);
+  assert.deepEqual(calls[0]!.body.contents, [
+    {
+      role: 'user',
+      parts: [
+        { text: '사진 1' },
+        { inline_data: { mime_type: 'image/jpeg', data: 'QUJD' } },
+        { text: '사진 2' },
+        { inline_data: { mime_type: 'image/png', data: 'REVG' } },
+        { text: '글을 써 줘' },
+      ],
+    },
+  ]);
+  // 사진이 없으면 예전과 똑같이 글만 보낸다
+  await llmGenerate('글만', opts({ provider: 'gemini', model: 'gemini-9-pro', fetchImpl }), []);
+  assert.deepEqual(calls[1]!.body.contents, [{ role: 'user', parts: [{ text: '글만' }] }]);
+});
+
+test('사진 보내기: 키는 사진을 보낼 때도 헤더에만 있다', async () => {
+  const { fetchImpl, calls } = fakeFetch([sse(anthropicStream(['리뷰']))]);
+  await llmGenerate('글을 써 줘', opts({ provider: 'anthropic', fetchImpl }), PHOTOS);
+  assert.ok(!calls[0]!.url.includes(KEY));
+  assert.ok(!JSON.stringify(calls[0]!.body).includes(KEY));
+});

@@ -13,6 +13,7 @@ import { parse } from '../lib/writer/response-parser.ts';
 import { buildFeedback } from '../lib/writer/retry-loop.ts';
 import type { BlogGenerationInput } from '../lib/writer/types.ts';
 import { buildStepInitialMessage, extractFirstTitle, getStepsForPlatform } from '../lib/seo/engine.ts';
+import { applyRewrites, buildCards, buildRewritePrompt, parseRewrites, parseSections, rewritePayload } from '../lib/cards/parser.ts';
 import { buildPack, REPO_ROOT } from '../scripts/build-prompt-pack.ts';
 import { GLUE } from '../scripts/glue.ts';
 
@@ -263,4 +264,72 @@ test('옮겨 적은 글 조각이 웹 소스에 그대로 있다', () => {
       assert.ok(source.includes(fragment), `"${key}" 의 조각이 웹 소스에 없어요: ${fragment}`);
     }
   }
+});
+
+// ───────────── 블로그용 카드 ─────────────
+// 웹의 cards-parser.ts 는 "./llm" 을 확장자 없이 불러와서 Node 에서 그대로 불러올 수 없다.
+// 소스에서 그 줄을 빼고 타입을 지운 뒤 돌려서 견준다. AI 호출은 가짜로 바꿔 넣는다.
+const cardsSource = readFileSync(join(webLib, 'cards-parser.ts'), 'utf-8');
+type WebCards = {
+  parseSections: (body: string) => unknown;
+  buildCards: (opts: Record<string, unknown>) => Promise<unknown[]>;
+};
+function loadWebCards(llmGenerate: (prompt: string) => Promise<{ text: string }>): WebCards {
+  const js = (strip as (code: string) => string)(cardsSource.replace(/^import .*$/m, '')).replace(/^export /gm, '');
+  return new Function('llmGenerate', js + '\nreturn { parseSections, buildCards };')(llmGenerate) as WebCards;
+}
+
+const cardBodies: Record<string, string> = {
+  '블로그 마크업': '[h2]가업 승계란[/h2]\n가업을 물려주는 일입니다. [bold]세금[/bold]이 가장 큰 문제입니다. 준비는 10년 전부터 합니다!\n[quote]인용은 빠진다[/quote]\n| 표 | 줄 |\n|---|---|\n| 도 | 빠진다 |\n[hr]\n[h2]증여세 계산[/h2]\n과세표준에 세율을 곱합니다. 공제는 10년 동안 5천만 원입니다. 신고는 3개월 안에 합니다. 넷째 문장은 쓰지 않습니다.\n[IMG: 자리 - 사진]\n[h2]내용이 없는 소제목[/h2]\n',
+  '마크다운 (SEO 결과)': '# 법인 전환 절차\n\n법인 전환은 **개인사업자**가 법인으로 바꾸는 일입니다. 절차는 5단계입니다.\n\n[이미지 제안]\n- 위치: H2 아래\n- 유형: 비교표\n\n## 언제 해야 하나요?\n\n- 매출이 늘 때\n- 세율이 부담될 때\n\n1. 먼저 상담합니다.\n2. 그다음 [서류](https://example.com)를 준비합니다.\n\n## 빈 소제목\n\n### 비용은 얼마인가요\n\n| 항목 | 금액 |\n|---|---|\n| 등기 | 100만 원 |\n\n대략 200만 원쯤 듭니다.',
+  '소제목 없는 글': '첫 문단입니다. 문장이 둘입니다.\n\n둘째 문단은 아주 길어서 제목으로 쓸 때 마흔 글자에서 잘립니다 정말로 길게 써서 넘치게 만들어 봅니다 이 정도면 넘습니다.\n\n셋째 문단.',
+  '빈 글': '',
+};
+
+for (const [name, cardBody] of Object.entries(cardBodies)) {
+  test(`카드: 소제목 나누기와 규칙으로 만든 카드가 웹과 같다 · ${name}`, { skip: strip ? false : '이 Node 에는 타입을 지우는 기능이 없어요' }, async () => {
+    const web = loadWebCards(async () => ({ text: '' }));
+    assert.deepEqual(parseSections(cardBody), web.parseSections(cardBody));
+    for (const options of [{}, { keywords: ['가업 승계', '증여세', '아주 길어서 스물네 글자에서 잘리는 키워드입니다 정말로'] }, { cardCount: 5 }, { maxContentCards: 1 }]) {
+      const mine = buildCards({ title: '[bold]제목[/bold] 입니다', body: cardBody, ...options });
+      assert.deepEqual(mine.cards, await web.buildCards({ title: '[bold]제목[/bold] 입니다', body: cardBody, ...options }));
+    }
+  });
+}
+
+test('카드: AI로 다듬는 프롬프트와 다듬은 결과가 웹과 같다', { skip: strip ? false : '이 Node 에는 타입을 지우는 기능이 없어요' }, async () => {
+  const cardBody = cardBodies['블로그 마크업'] as string;
+  const title = '가업 승계 준비 {{total}}';
+  // AI는 2번을 빠뜨리고 답한다. 웹은 한 번 더 묻는다.
+  const answers = [
+    '설명입니다.\n```json\n{"cards":[{"index":1,"lead":" 다듬은 핵심 문장입니다. ","body_text":"다듬은 설명입니다."},{"index":3,"lead":"","body_text":"셋째 설명입니다."}]}\n```',
+    '{"cards":[{"index":2,"lead":"둘째 핵심입니다.","body_text":"  "},{"index":1,"lead":"덮어쓰면 안 되는 문장","body_text":"x"}]}',
+  ];
+  const prompts: string[] = [];
+  const replies = [...answers];
+  const web = loadWebCards(async (prompt) => {
+    prompts.push(prompt);
+    return { text: replies.shift() ?? '' };
+  });
+  const webCards = await web.buildCards({ title, body: cardBody, ai: { provider: 'gemini' } });
+
+  // 프롬프트
+  const built = buildCards({ title, body: cardBody });
+  const payload = rewritePayload(built.cards, built.usedSections);
+  assert.equal(payload.length, 3);
+  assert.equal(buildRewritePrompt(pack, title, payload), prompts[0]);
+  assert.equal(prompts.length, 2, '빠진 번호가 있어서 웹이 한 번 더 물었다');
+
+  // 결과: 첫 답을 먼저 쓰고, 다시 물은 답에서는 빠졌던 번호만 채운다
+  const first = parseRewrites(answers[0] as string);
+  const second = parseRewrites(answers[1] as string);
+  assert.ok(first && second);
+  for (const [index, value] of second) if (!first.has(index)) first.set(index, value);
+  assert.deepEqual(applyRewrites(built.cards, first), webCards);
+
+  // 묶음에 프롬프트가 없으면 (예전 묶음) 만들지 않는다
+  const oldPack = JSON.parse(JSON.stringify(pack));
+  delete oldPack.glue['cards.rewrite'];
+  assert.equal(buildRewritePrompt(oldPack, title, payload), null);
+  assert.equal(parseRewrites('JSON 이 아님'), null);
 });

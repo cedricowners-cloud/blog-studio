@@ -50,12 +50,18 @@ test('패키지에 프롬프트 글이 들어 있지 않다', { skip }, async ()
   assert.deepEqual(found, [], '패키지에 프롬프트 글이 들어 있어요');
 });
 
-test('패키지의 접근 허용 주소는 네이버 블로그, AI 3사, 그리고 내 서버 하나뿐이다', { skip }, () => {
+test('패키지의 접근 허용 주소는 네이버 블로그, AI 3사, 내 서버, 내 웹뿐이다', { skip }, () => {
   const manifest = JSON.parse(readFileSync(join(dist, 'manifest.json'), 'utf-8')) as { host_permissions?: string[]; permissions?: string[] };
   const hosts = [...(manifest.host_permissions ?? [])];
-  // 서버(Supabase) 주소는 .env 에 있을 때만 들어간다. 있어도 주소 하나뿐이어야 한다.
-  const server = hosts.filter((host) => /^https:\/\/[a-z0-9]+\.supabase\.co\/\*$/.test(host));
-  assert.ok(server.length <= 1, '서버 주소는 하나만 들어가야 해요');
+  // .env 에 적은 서버(Supabase) 주소와 blog_studio 웹 주소만 더 들어갈 수 있다. 각각 주소 하나뿐이다.
+  const envFile = join(here, '..', '.env');
+  const envText = existsSync(envFile) ? readFileSync(envFile, 'utf-8') : '';
+  const fromEnv = (name: string) => {
+    const value = new RegExp(`^${name}=(.+)$`, 'm').exec(envText)?.[1]?.trim().replace(/\/+$/, '');
+    return value ? `${value}/*` : null;
+  };
+  const server = [fromEnv('WXT_SUPABASE_URL'), fromEnv('WXT_WEB_URL')].filter((host): host is string => host !== null);
+  for (const host of server) assert.match(host, /^https:\/\/[a-z0-9.-]+\/\*$/, '주소 하나만 가리켜야 해요 (별표로 여러 사이트를 열면 안 돼요)');
   assert.deepEqual(hosts.filter((host) => !server.includes(host)).sort(), [
     'https://api.anthropic.com/*',
     'https://api.openai.com/*',

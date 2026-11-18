@@ -82,6 +82,22 @@ export const GLUE_KEYS = [
 
 export type GlueKey = (typeof GLUE_KEYS)[number];
 
+/**
+ * 있으면 쓰고 없어도 되는 글 조각. 새 기능이 생길 때 여기에 더한다.
+ * 꼭 있어야 하는 목록에 넣으면 예전에 받은 묶음을 못 쓰게 되므로, 그 기능만 꺼지게 한다.
+ */
+export const OPTIONAL_GLUE_KEYS = [
+  // 블로그용 카드의 문구를 AI로 다듬기
+  'cards.rewrite',
+  // 사진으로 리뷰 쓰기
+  'review.photo',
+  'review.photo_label',
+  'review.purchase_own',
+  'review.purchase_sponsored',
+  'review.purchase_none',
+  'review.no_notes',
+] as const;
+
 export function glue(pack: PromptPack, key: GlueKey): string {
   const value = pack.glue[key];
   if (typeof value !== 'string') throw new Error(`프롬프트 묶음에 "${key}" 조각이 없어요. 묶음을 다시 만들어 불러와 주세요.`);

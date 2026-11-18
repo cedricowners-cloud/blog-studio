@@ -1,5 +1,14 @@
 import { browser } from 'wxt/browser';
-import type { FillRequest, FillResult, ProbeResult } from './types';
+import type {
+  FillRequest,
+  FillResult,
+  ImagePasteRequest,
+  ImagePasteResult,
+  ImagesBeginResult,
+  ImagesFinishRequest,
+  ImagesFinishResult,
+  ProbeResult,
+} from './types';
 
 export interface WriteTab {
   id: number;
@@ -84,4 +93,71 @@ export async function probeEditor(tabId: number, includeRaw: boolean): Promise<P
     .filter((r): r is ProbeResult => r != null);
   results.sort((a, b) => Number(b.found) - Number(a.found));
   return results;
+}
+
+// ───────── 사진 넣기 ─────────
+// 시작할 때 에디터가 있는 프레임을 알아내고, 그 뒤로는 그 프레임에만 보낸다.
+// 사진 데이터가 크기 때문에 다른 프레임에까지 보내지 않는다.
+
+export interface ImagesStart extends ImagesBeginResult {
+  /** 에디터가 있는 프레임. 붙여넣기와 마무리는 이 프레임에만 보낸다 */
+  frameId: number;
+}
+
+/** 사진 넣기를 시작한다. 지금 문서를 떠 두고 붙여넣기를 받을 곳을 찾는다. */
+export async function beginImages(tabId: number): Promise<ImagesStart | null> {
+  await injectBridge(tabId);
+  const injected = await browser.scripting.executeScript({
+    target: { tabId, allFrames: true },
+    world: 'MAIN',
+    func: () => {
+      const bridge = (window as any).__blogStudioEditor;
+      return bridge && bridge.imagesBegin ? bridge.imagesBegin() : null;
+    },
+  });
+  const answers = injected
+    .map((item) => ({ frameId: item.frameId ?? 0, result: item.result as ImagesBeginResult | null }))
+    .filter((item): item is { frameId: number; result: ImagesBeginResult } => item.result != null);
+  const hit = answers.find((item) => item.result.reason !== 'no-editor') ?? answers[0];
+  return hit ? { ...hit.result, frameId: hit.frameId } : null;
+}
+
+/** 사진 한 장을 붙여넣는다. 사진은 한 장씩 보낸다 (한꺼번에 보내면 너무 크다). */
+export async function pasteImage(tabId: number, frameId: number, request: ImagePasteRequest): Promise<ImagePasteResult | null> {
+  const [injected] = await browser.scripting.executeScript({
+    target: { tabId, frameIds: [frameId] },
+    world: 'MAIN',
+    func: async (req: ImagePasteRequest) => {
+      const bridge = (window as any).__blogStudioEditor;
+      return bridge && bridge.imagePaste ? await bridge.imagePaste(req) : null;
+    },
+    args: [request],
+  });
+  return (injected?.result as ImagePasteResult | null) ?? null;
+}
+
+/** 올라온 사진을 본문의 이미지 자리로 옮긴다. */
+export async function finishImages(tabId: number, frameId: number, request: ImagesFinishRequest): Promise<ImagesFinishResult | null> {
+  const [injected] = await browser.scripting.executeScript({
+    target: { tabId, frameIds: [frameId] },
+    world: 'MAIN',
+    func: async (req: ImagesFinishRequest) => {
+      const bridge = (window as any).__blogStudioEditor;
+      return bridge && bridge.imagesFinish ? await bridge.imagesFinish(req) : null;
+    },
+    args: [request],
+  });
+  return (injected?.result as ImagesFinishResult | null) ?? null;
+}
+
+/** 사진 넣기를 그만두고 붙여넣기 전으로 돌려놓는다. */
+export async function cancelImages(tabId: number, frameId: number): Promise<void> {
+  await browser.scripting.executeScript({
+    target: { tabId, frameIds: [frameId] },
+    world: 'MAIN',
+    func: async () => {
+      const bridge = (window as any).__blogStudioEditor;
+      if (bridge && bridge.imagesCancel) await bridge.imagesCancel();
+    },
+  });
 }

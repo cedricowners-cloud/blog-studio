@@ -92,11 +92,158 @@ export async function signIn(cfg: ServerConfig, email: string, password: string,
   if (res.status === 400 || res.status === 401 || res.status === 422) {
     throw new ServerError(
       'credentials',
-      '이메일이나 비밀번호가 맞지 않아요. 메일 링크로만 로그인해 왔다면, 웹에서 비밀번호를 먼저 정해 주세요.',
+      '이메일이나 비밀번호가 맞지 않아요. 비밀번호를 모르면 [메일로 로그인 링크 받기]를 써 주세요.',
       res.status,
     );
   }
   throw new ServerError('other', `로그인하지 못했어요 (${res.status}). 잠시 뒤에 다시 해 주세요.`, res.status);
+}
+
+/**
+ * 로그인 메일을 보내 달라고 한다. 웹의 "메일 링크로 로그인"과 같은 메일이다.
+ * 메일에는 로그인 링크가 오고, 메일 양식에 코드를 넣어 뒀으면 6자리 코드도 같이 온다.
+ * 새 계정은 만들지 않는다. 이미 가입한 이메일에만 보낸다.
+ */
+export async function requestLoginEmail(cfg: ServerConfig, email: string): Promise<void> {
+  if (!email.trim()) throw new ServerError('credentials', '이메일을 적어 주세요.');
+  const res = await call(cfg, '/auth/v1/otp', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: email.trim(), create_user: false }),
+  });
+  if (res.ok) return;
+  if (res.status === 429) {
+    throw new ServerError('rate', '메일을 너무 자주 요청했어요. 1분쯤 뒤에 다시 해 주세요. 그래도 안 되면 한 시간쯤 뒤에 해 주세요.', 429);
+  }
+  if (res.status >= 400 && res.status < 500) {
+    throw new ServerError('credentials', '이 이메일로는 로그인 메일을 보낼 수 없어요. blog_studio 웹에서 쓰는 이메일이 맞는지 확인해 주세요.', res.status);
+  }
+  throw new ServerError('other', `메일을 보내지 못했어요 (${res.status}). 잠시 뒤에 다시 해 주세요.`, res.status);
+}
+
+export type LoginInput = { kind: 'code'; token: string } | { kind: 'link'; token_hash: string; type: string };
+
+const LINK_TYPES = ['magiclink', 'email', 'recovery', 'signup', 'invite'];
+
+/**
+ * 사람이 적은 것이 6자리 코드인지, 메일의 로그인 링크 주소인지 알아본다. 둘 다 아니면 null.
+ * 링크 주소에는 한 번만 쓸 수 있는 표시(token)가 들어 있다. 그것으로도 로그인할 수 있다.
+ */
+export function parseLoginInput(input: string): LoginInput | null {
+  const text = input.trim();
+  const digits = text.replace(/[\s-]/g, '');
+  if (/^\d{6,10}$/.test(digits)) return { kind: 'code', token: digits };
+  if (!/^https?:\/\//i.test(text)) return null;
+  try {
+    const url = new URL(text);
+    const hash = url.searchParams.get('token_hash') ?? url.searchParams.get('token');
+    if (!hash) return null;
+    const type = url.searchParams.get('type') ?? '';
+    return { kind: 'link', token_hash: hash, type: LINK_TYPES.includes(type) ? type : 'email' };
+  } catch {
+    return null;
+  }
+}
+
+/** 메일로 받은 6자리 코드, 또는 메일에 있는 로그인 링크의 주소로 로그인한다. */
+export async function signInWithEmailCode(cfg: ServerConfig, email: string, input: string, nowMs: number = Date.now()): Promise<Session> {
+  const parsed = parseLoginInput(input);
+  if (!parsed) {
+    throw new ServerError('credentials', '메일에 있는 로그인 링크의 주소를 복사해서 붙여넣어 주세요. 메일에 6자리 코드가 있으면 그 코드를 적어도 돼요.');
+  }
+  if (parsed.kind === 'code' && !email.trim()) throw new ServerError('credentials', '이메일을 적어 주세요.');
+  const body =
+    parsed.kind === 'code'
+      ? { type: 'email', email: email.trim(), token: parsed.token }
+      : { type: parsed.type, token_hash: parsed.token_hash };
+  const res = await call(cfg, '/auth/v1/verify', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const data = await readJson(res);
+  if (res.ok) {
+    const session = toSession(data, nowMs);
+    return { ...session, user: { id: session.user.id, email: session.user.email || email.trim() } };
+  }
+  if (res.status === 429) throw new ServerError('rate', '너무 여러 번 시도했어요. 잠시 뒤에 다시 해 주세요.', 429);
+  if (res.status >= 400 && res.status < 500) {
+    throw new ServerError(
+      'credentials',
+      parsed.kind === 'code'
+        ? '코드가 맞지 않거나 시간이 지났어요. 메일을 다시 받아서 새 코드를 적어 주세요.'
+        : '이 링크는 이미 썼거나 시간이 지났어요. 메일을 다시 받고, 링크를 누르지 말고 주소만 복사해서 붙여넣어 주세요.',
+      res.status,
+    );
+  }
+  throw new ServerError('other', `로그인하지 못했어요 (${res.status}). 잠시 뒤에 다시 해 주세요.`, res.status);
+}
+
+export interface UrlTokens {
+  access_token: string;
+  refresh_token: string;
+  /** 끝나는 때 (1970년부터의 초). 주소에 없으면 null */
+  expires_at: number | null;
+}
+
+/** 링크를 눌렀는데 로그인되지 않았을 때 주소에 적혀 오는 까닭. 없으면 null */
+export function linkErrorFromUrl(url: string): string | null {
+  try {
+    const params = new URLSearchParams(new URL(url).hash.replace(/^#/, ''));
+    return params.get('error_code') ?? params.get('error');
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 메일의 로그인 링크를 누르면, 서버가 로그인 정보를 주소의 # 뒤에 붙여서 웹으로 보낸다.
+ * 그 주소에서 로그인 정보를 꺼낸다. 없으면 null.
+ */
+export function tokensFromUrl(url: string): UrlTokens | null {
+  let hash: string;
+  try {
+    hash = new URL(url).hash.replace(/^#/, '');
+  } catch {
+    return null;
+  }
+  const params = new URLSearchParams(hash);
+  const access = params.get('access_token');
+  const refresh = params.get('refresh_token');
+  if (!access || !refresh) return null;
+  const expiresAt = Number(params.get('expires_at'));
+  return { access_token: access, refresh_token: refresh, expires_at: Number.isFinite(expiresAt) && expiresAt > 0 ? expiresAt : null };
+}
+
+/** 로그인 정보가 누구 것인지 서버에 묻는다. 쓸 수 없는 정보면 오류가 난다. */
+export async function fetchUser(cfg: ServerConfig, accessToken: string): Promise<{ id: string; email: string }> {
+  const res = await call(cfg, '/auth/v1/user', { method: 'GET', token: accessToken });
+  if (res.status === 401 || res.status === 403) throw new ServerError('expired', '로그인 정보를 쓸 수 없어요. 메일을 다시 받아 주세요.', res.status);
+  if (!res.ok) throw new ServerError('other', `로그인 정보를 확인하지 못했어요 (${res.status}).`, res.status);
+  const data = await readJson(res);
+  if (typeof data.id !== 'string') throw new ServerError('other', '서버의 답을 알아보지 못했어요.');
+  return { id: data.id, email: typeof data.email === 'string' ? data.email : '' };
+}
+
+/** 비밀번호를 새로 정한다. 정해 두면 다음부터 비밀번호로도 로그인할 수 있다. 웹 로그인에도 같이 쓰인다. */
+export async function setPassword(cfg: ServerConfig, session: Session, password: string): Promise<void> {
+  if (password.length < 8) throw new ServerError('credentials', '비밀번호는 8자 이상으로 정해 주세요.');
+  const res = await call(cfg, '/auth/v1/user', {
+    method: 'PUT',
+    token: session.access_token,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password }),
+  });
+  if (res.ok) return;
+  const data = await readJson(res);
+  const code = String(data.error_code ?? '');
+  if (res.status === 401) throw new ServerError('expired', '로그인이 풀렸어요. 다시 로그인한 뒤에 해 주세요.', 401);
+  if (code === 'weak_password') throw new ServerError('credentials', '비밀번호가 너무 쉬워요. 더 길게, 글자와 숫자를 섞어서 정해 주세요.', res.status);
+  if (code === 'same_password') throw new ServerError('credentials', '지금 쓰는 비밀번호와 같아요. 다른 비밀번호로 정해 주세요.', res.status);
+  if (code === 'reauthentication_needed') {
+    throw new ServerError('credentials', '보안 설정 때문에 지금은 바꿀 수 없어요. 로그아웃한 뒤 메일로 다시 로그인해서 바로 해 주세요.', res.status);
+  }
+  throw new ServerError('other', `비밀번호를 정하지 못했어요 (${res.status}). 잠시 뒤에 다시 해 주세요.`, res.status);
 }
 
 /** 로그인 정보가 곧 끝나는지. 끝나기 조금 전에 미리 새로 받는다. */

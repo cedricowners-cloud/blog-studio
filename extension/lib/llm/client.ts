@@ -10,9 +10,21 @@ export type LLMProvider = 'gemini' | 'openai' | 'anthropic';
 
 export const PROVIDERS: LLMProvider[] = ['gemini', 'openai', 'anthropic'];
 
+/** AI에 글과 함께 보내는 사진 */
+export interface LLMImage {
+  /** 'image/jpeg' 같은 종류 */
+  mime: string;
+  /** base64 로 바꾼 사진. 앞의 "data:...;base64," 는 뺀 것 */
+  data: string;
+  /** 사진 바로 앞에 붙이는 이름 ("사진 1"). AI가 글에서 사진을 가리킬 때 쓴다 */
+  label?: string;
+}
+
 export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
+  /** 이 말에 붙여 보내는 사진. 사진을 먼저, 글을 나중에 보낸다 */
+  images?: LLMImage[];
 }
 
 export interface LLMUsage {
@@ -266,20 +278,55 @@ interface Prepared {
   collect: Collector;
 }
 
+// 사진이 붙은 말을 회사마다의 모양으로 바꾼다. 사진마다 이름표(글)를 먼저 놓고, 맨 끝에 글을 놓는다.
+// 사진이 없으면 예전과 똑같이 글만 보낸다.
+
+function anthropicContent(m: ChatMessage): unknown {
+  if (!m.images?.length) return m.content;
+  const parts: unknown[] = [];
+  for (const image of m.images) {
+    if (image.label) parts.push({ type: 'text', text: image.label });
+    parts.push({ type: 'image', source: { type: 'base64', media_type: image.mime, data: image.data } });
+  }
+  parts.push({ type: 'text', text: m.content });
+  return parts;
+}
+
+function openaiContent(m: ChatMessage): unknown {
+  if (!m.images?.length) return m.content;
+  const parts: unknown[] = [];
+  for (const image of m.images) {
+    if (image.label) parts.push({ type: 'text', text: image.label });
+    parts.push({ type: 'image_url', image_url: { url: `data:${image.mime};base64,${image.data}` } });
+  }
+  parts.push({ type: 'text', text: m.content });
+  return parts;
+}
+
+function geminiParts(m: ChatMessage): unknown[] {
+  const parts: unknown[] = [];
+  for (const image of m.images ?? []) {
+    if (image.label) parts.push({ text: image.label });
+    parts.push({ inline_data: { mime_type: image.mime, data: image.data } });
+  }
+  parts.push({ text: m.content });
+  return parts;
+}
+
 function prepare(messages: ChatMessage[], opts: LLMOptions): Prepared {
   const { provider, model, apiKey, maxTokens, temperature } = opts;
   if (provider === 'anthropic') {
     return {
       url: 'https://api.anthropic.com/v1/messages',
       headers: ANTHROPIC_HEADERS(apiKey),
-      body: { model, max_tokens: maxTokens, stream: true, messages: messages.map((m) => ({ role: m.role, content: m.content })) },
+      body: { model, max_tokens: maxTokens, stream: true, messages: messages.map((m) => ({ role: m.role, content: anthropicContent(m) })) },
       collect: collectAnthropic,
     };
   }
   if (provider === 'openai') {
     const body: Record<string, unknown> = {
       model,
-      messages: messages.map((m) => ({ role: m.role, content: m.content })),
+      messages: messages.map((m) => ({ role: m.role, content: openaiContent(m) })),
       stream: true,
       stream_options: { include_usage: true },
       max_completion_tokens: maxTokens,
@@ -298,7 +345,7 @@ function prepare(messages: ChatMessage[], opts: LLMOptions): Prepared {
     url: `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse`,
     headers: { 'x-goog-api-key': apiKey, 'Content-Type': 'application/json' },
     body: {
-      contents: messages.map((m) => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] })),
+      contents: messages.map((m) => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: geminiParts(m) })),
       generationConfig,
     },
     collect: collectGemini,
@@ -406,9 +453,9 @@ export async function llmChat(messages: ChatMessage[], opts: LLMOptions): Promis
   }
 }
 
-/** 프롬프트 하나를 보내고 답을 받는다. */
-export function llmGenerate(prompt: string, opts: LLMOptions): Promise<LLMResult> {
-  return llmChat([{ role: 'user', content: prompt }], opts);
+/** 프롬프트 하나를 보내고 답을 받는다. 사진을 같이 보낼 수 있다. */
+export function llmGenerate(prompt: string, opts: LLMOptions, images?: LLMImage[]): Promise<LLMResult> {
+  return llmChat([{ role: 'user', content: prompt, ...(images?.length ? { images } : {}) }], opts);
 }
 
 // ───────────────────────── 모델 목록 ─────────────────────────
