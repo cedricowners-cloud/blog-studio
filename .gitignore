@@ -35,6 +35,9 @@ local_agent/data/cookies/
 local_agent/data/accounts.enc
 local_agent/data/agent_auth.enc
 local_agent/data/agent.id
+# 소금 값은 기기마다 따로 만든다. 올리지 않는다 (.salt.backup 은 이 컴퓨터에 둔 사본)
+local_agent/data/.salt
+local_agent/data/.salt.backup
 
 # OS
 .DS_Store
