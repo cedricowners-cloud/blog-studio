@@ -21,7 +21,7 @@ const NAV_ITEMS = [
   { href: "/settings", label: "설정" },
 ];
 
-const HIDDEN_PATHS = ["/login", "/auth"];
+const HIDDEN_PATHS = ["/login", "/auth", "/privacy"];
 
 export function Nav() {
   const pathname = usePathname();
