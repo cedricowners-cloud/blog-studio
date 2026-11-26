@@ -23,29 +23,44 @@ interface FieldDef {
 }
 
 // 사용 가능한 모델 — 오타 방지용 화이트리스트.
-// 새 모델이 나오면 여기에 추가하면 됨.
+// 새 모델이 나오면 여기에 추가하면 됨. (lib/llm.ts 의 기본값, lib/llm-pricing.ts 의 요금 표도 같이 고친다)
+//
+// 2026-11-18 에 각 회사 문서를 보고 고쳤다.
+//   - 새 모델을 위에, 아직 되지만 곧 꺼지는 예전 모델을 아래에 둔다 (전에 골라 둔 사람이 볼 수 있게).
+//   - 이미 꺼진 모델은 뺐다: claude-3-5-sonnet-20241022 (2025-10 종료), gemini-2.0-flash (2026-06 종료).
 const OPENAI_MODELS: ModelOption[] = [
   { value: "", label: "(기본값 사용)" },
-  { value: "gpt-4.1", label: "gpt-4.1", desc: "강력·고가" },
-  { value: "gpt-4.1-mini", label: "gpt-4.1-mini", desc: "빠름·저렴" },
-  { value: "gpt-4o", label: "gpt-4o", desc: "균형형" },
-  { value: "gpt-4o-mini", label: "gpt-4o-mini", desc: "최저가" },
+  { value: "gpt-6.2-sol", label: "gpt-6.2-sol", desc: "균형형 (기본)" },
+  { value: "gpt-6.2-astra", label: "gpt-6.2-astra", desc: "최강·고가" },
+  { value: "gpt-6.1-terra", label: "gpt-6.1-terra", desc: "빠름·저렴" },
+  { value: "gpt-6-luna", label: "gpt-6-luna", desc: "최저가" },
+  { value: "gpt-4.1", label: "gpt-4.1 (구버전)", desc: "2027-01-14 종료" },
+  { value: "gpt-4.1-mini", label: "gpt-4.1-mini (구버전)", desc: "2027-01-14 종료" },
+  { value: "gpt-4o", label: "gpt-4o (구버전)", desc: "2027-01-14 종료" },
+  { value: "gpt-4o-mini", label: "gpt-4o-mini (구버전)", desc: "2027-01-14 종료" },
 ];
 
 const ANTHROPIC_MODELS: ModelOption[] = [
   { value: "", label: "(기본값 사용)" },
-  { value: "claude-opus-4-5", label: "claude-opus-4-5", desc: "최강·고가" },
-  { value: "claude-sonnet-4-5-20250929", label: "claude-sonnet-4-5", desc: "균형형 (기본)" },
-  { value: "claude-haiku-4-5-20251001", label: "claude-haiku-4-5", desc: "빠름·저렴" },
-  { value: "claude-3-5-sonnet-20241022", label: "claude-3-5-sonnet (구버전)", desc: "안정형" },
+  { value: "claude-sonnet-5-5", label: "claude-sonnet-5-5", desc: "균형형 (기본)" },
+  { value: "claude-opus-5-5", label: "claude-opus-5-5", desc: "강력" },
+  { value: "claude-fable-5-2", label: "claude-fable-5-2", desc: "최강·고가" },
+  { value: "claude-haiku-5-5", label: "claude-haiku-5-5", desc: "빠름·저렴" },
+  { value: "claude-opus-4-5-20251101", label: "claude-opus-4-5 (구버전)", desc: "곧 종료될 수 있음" },
+  { value: "claude-sonnet-4-5-20250929", label: "claude-sonnet-4-5 (구버전)", desc: "2026-11-30 종료" },
+  { value: "claude-haiku-4-5-20251001", label: "claude-haiku-4-5 (구버전)", desc: "곧 종료될 수 있음" },
 ];
 
 const GEMINI_MODELS: ModelOption[] = [
   { value: "", label: "(기본값 사용)" },
-  { value: "gemini-2.5-pro", label: "gemini-2.5-pro", desc: "강력 (기본)" },
-  { value: "gemini-2.5-flash", label: "gemini-2.5-flash", desc: "빠름" },
-  { value: "gemini-2.5-flash-lite", label: "gemini-2.5-flash-lite", desc: "저렴" },
-  { value: "gemini-2.0-flash", label: "gemini-2.0-flash", desc: "구버전" },
+  { value: "gemini-4-hydrogen", label: "gemini-4-hydrogen", desc: "균형형 (기본) · 무료 한도 있음" },
+  { value: "gemini-4-carbon", label: "gemini-4-carbon", desc: "최강 · 유료 키만" },
+  { value: "gemini-4-argon", label: "gemini-4-argon", desc: "강력 · 유료 키만" },
+  { value: "gemini-3.8-flash", label: "gemini-3.8-flash", desc: "빠름 · 무료 한도 있음" },
+  { value: "gemini-3.5-flash-lite", label: "gemini-3.5-flash-lite", desc: "저렴" },
+  { value: "gemini-2.5-pro", label: "gemini-2.5-pro (구버전)", desc: "새로 만든 키에서는 이미 안 됨 · 2026-12-01 종료" },
+  { value: "gemini-2.5-flash", label: "gemini-2.5-flash (구버전)", desc: "새로 만든 키에서는 안 될 수 있음 · 2026-12-01 종료" },
+  { value: "gemini-2.5-flash-lite", label: "gemini-2.5-flash-lite (구버전)", desc: "저렴" },
 ];
 
 const LLM_FIELDS: FieldDef[] = [
