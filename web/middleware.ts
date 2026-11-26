@@ -3,7 +3,8 @@ import { NextResponse, type NextRequest } from "next/server";
 
 type CookieToSet = { name: string; value: string; options: CookieOptions };
 
-const PUBLIC_PATHS = ["/login", "/auth/callback"];
+// "/privacy" 는 크롬 확장의 개인정보 처리방침. 크롬 웹 스토어의 심사에서 로그인 없이 열려야 한다.
+const PUBLIC_PATHS = ["/login", "/auth/callback", "/privacy"];
 
 export async function middleware(req: NextRequest) {
   let res = NextResponse.next({ request: { headers: req.headers } });
