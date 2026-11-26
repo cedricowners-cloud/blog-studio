@@ -307,3 +307,19 @@ export async function fetchPack(cfg: ServerConfig, session: Session): Promise<Pa
   const access = await restRows(cfg, session, `/rest/v1/prompt_access?user_id=eq.${encodeURIComponent(session.user.id)}&select=user_id`);
   return { status: access.length > 0 ? 'not-uploaded' : 'not-allowed' };
 }
+
+export interface SharedKeysRow {
+  keys: unknown;
+  updated_at: string;
+}
+
+/**
+ * 가족이 함께 쓰는 네이버 API 키를 받는다 (supabase/migrations/018_shared_keys.sql).
+ * 받아도 되는 사람 목록에 없거나 올려 둔 키가 없으면 서버가 빈 답을 준다. 그때는 null.
+ */
+export async function fetchSharedKeys(cfg: ServerConfig, session: Session): Promise<SharedKeysRow | null> {
+  const rows = await restRows(cfg, session, '/rest/v1/shared_keys?id=eq.naver&select=keys,updated_at');
+  const row = rows[0] as Partial<SharedKeysRow> | undefined;
+  if (!row || typeof row.updated_at !== 'string' || typeof row.keys !== 'object' || row.keys === null) return null;
+  return { keys: row.keys, updated_at: row.updated_at };
+}

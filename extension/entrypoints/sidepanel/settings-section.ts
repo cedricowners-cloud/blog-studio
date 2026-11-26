@@ -1,3 +1,4 @@
+import { createNaverKeysCard } from './naver-section';
 import { browser } from 'wxt/browser';
 import { listModels, pickDefaultModel, PROVIDERS, type LLMProvider } from '../../lib/llm/client';
 import { COMMON_KEY_NOTES, PROVIDER_GUIDES } from '../../lib/llm/providers';
@@ -16,6 +17,9 @@ function providerCard(provider: LLMProvider): HTMLElement {
   const modelRow = h('label', { class: 'labeled' }, h('span', { class: 'label' }, '쓸 모델'), modelSelect);
   const message = h('p', { class: 'message' });
   const usageLine = h('p', { class: 'hint small' });
+  const recommendLine = h('p', { class: 'hint small' });
+  const recommendButton = h('button', { type: 'button', class: 'small' }, '추천 모델로 바꾸기');
+  const recommendRow = h('div', { class: 'choice-row' }, recommendLine, recommendButton);
   const openButton = h('button', { type: 'button' }, '키 발급 페이지 열기');
   const checkButton = h('button', { type: 'button', class: 'primary' }, '확인');
   const removeButton = h('button', { type: 'button' }, '키 지우기');
@@ -37,6 +41,13 @@ function providerCard(provider: LLMProvider): HTMLElement {
     modelSelect.replaceChildren(...models.map((m) => option(m.id, m.label === m.id ? m.id : `${m.label} (${m.id})`, m.id === saved?.model)));
     modelRow.hidden = models.length === 0;
     removeButton.hidden = !saved;
+    // 추천 모델: 처음 골라 주는 규칙이 고르는 모델. 지금 고른 것과 다르면 바꿀 수 있게 한다.
+    const recommended = models.length > 0 ? pickDefaultModel(provider, models) : '';
+    recommendRow.hidden = !recommended;
+    recommendButton.hidden = !recommended || recommended === saved?.model;
+    recommendLine.textContent = !recommended ? '' : recommended === saved?.model ? '추천 모델을 쓰고 있어요.' : `추천 모델: ${recommended}`;
+    // 고른 모델이 없어져서 다른 모델로 바꿨으면 알려 준다.
+    if (saved?.note) setMessage(message, saved.note, 'warn');
 
     const used = (await loadUsageToday())[provider];
     usageLine.textContent = used
@@ -67,16 +78,29 @@ function providerCard(provider: LLMProvider): HTMLElement {
       }
       const keep = saved && saved.key === key && models.some((m) => m.id === saved?.model) ? saved.model : '';
       const model = keep || pickDefaultModel(provider, models);
+      const gone = saved && saved.key === key && saved.model && !keep ? ` 전에 고른 ${saved.model} 모델은 목록에서 없어졌어요.` : '';
       await saveKey(provider, { key, model, models, checkedAt: new Date().toISOString() });
       keyInput.value = '';
       await draw();
-      setMessage(message, `확인했어요. 쓸 수 있는 모델 ${models.length}개 · 고른 모델 ${model}`, 'ok');
+      setMessage(message, `확인했어요. 쓸 수 있는 모델 ${models.length}개 · 고른 모델 ${model}.${gone}`, gone ? 'warn' : 'ok');
     }),
   );
 
+  recommendButton.addEventListener('click', () => {
+    if (!saved) return;
+    const recommended = pickDefaultModel(provider, saved.models);
+    if (!recommended) return;
+    const { note: _note, ...rest } = saved;
+    setMessage(message, `${recommended} 모델로 바꿨어요.`, 'ok');
+    void saveKey(provider, { ...rest, model: recommended }).then(draw);
+  });
+
   modelSelect.addEventListener('change', () => {
     if (!saved) return;
-    void saveKey(provider, { ...saved, model: modelSelect.value }).then(draw);
+    // 사람이 직접 골랐으니 "바꿔 뒀어요" 안내는 지운다.
+    const { note: _note, ...rest } = saved;
+    setMessage(message, '');
+    void saveKey(provider, { ...rest, model: modelSelect.value }).then(draw);
   });
 
   removeButton.addEventListener('click', () =>
@@ -88,7 +112,8 @@ function providerCard(provider: LLMProvider): HTMLElement {
     }),
   );
 
-  onStoreChange(['usage'], () => void draw());
+  // 쓴 양이 바뀌거나, 모델 목록을 새로 받았을 때 다시 그린다.
+  onStoreChange(['usage', 'aiKeys'], () => void draw());
   void draw();
 
   return h('section', { class: 'card' },
@@ -99,6 +124,7 @@ function providerCard(provider: LLMProvider): HTMLElement {
     keyInput,
     h('div', { class: 'buttons' }, checkButton, removeButton),
     modelRow,
+    recommendRow,
     message,
     usageLine,
   );
@@ -110,8 +136,10 @@ export function createSettingsSection(): HTMLElement {
     h('section', { class: 'card' },
       h('h2', null, 'AI 키'),
       h('p', { class: 'hint' }, '쓰고 싶은 AI 하나만 넣어도 돼요. 키를 붙여넣고 [확인]을 누르면 쓸 수 있는 모델을 보여 줘요. 확인에는 돈이 들지 않아요.'),
+      h('p', { class: 'hint small' }, '모델 목록은 회사에서 그때그때 받아 와요. 일주일이 지나면 패널을 열 때 자동으로 새로 받고, 지금 받으려면 [확인]을 눌러요.'),
       ...COMMON_KEY_NOTES.map((n) => h('p', { class: 'hint small' }, n)),
     ),
     ...PROVIDERS.map(providerCard),
+    createNaverKeysCard(),
   );
 }

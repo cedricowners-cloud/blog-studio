@@ -50,7 +50,7 @@ test('패키지에 프롬프트 글이 들어 있지 않다', { skip }, async ()
   assert.deepEqual(found, [], '패키지에 프롬프트 글이 들어 있어요');
 });
 
-test('패키지의 접근 허용 주소는 네이버 블로그, AI 3사, 내 서버, 내 웹뿐이다', { skip }, () => {
+test('패키지의 접근 허용 주소는 네이버 블로그, 네이버 API 두 곳, AI 3사, 내 서버, 내 웹뿐이다', { skip }, () => {
   const manifest = JSON.parse(readFileSync(join(dist, 'manifest.json'), 'utf-8')) as { host_permissions?: string[]; permissions?: string[] };
   const hosts = [...(manifest.host_permissions ?? [])];
   // .env 에 적은 서버(Supabase) 주소와 blog_studio 웹 주소만 더 들어갈 수 있다. 각각 주소 하나뿐이다.
@@ -65,8 +65,10 @@ test('패키지의 접근 허용 주소는 네이버 블로그, AI 3사, 내 서
   assert.deepEqual(hosts.filter((host) => !server.includes(host)).sort(), [
     'https://api.anthropic.com/*',
     'https://api.openai.com/*',
+    'https://api.searchad.naver.com/*',
     'https://blog.naver.com/*',
     'https://generativelanguage.googleapis.com/*',
+    'https://openapi.naver.com/*',
   ]);
   assert.ok(!(manifest.permissions ?? []).includes('<all_urls>'));
 });

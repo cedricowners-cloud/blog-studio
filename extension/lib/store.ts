@@ -4,15 +4,18 @@ import { browser } from 'wxt/browser';
 import { PROVIDERS, type LLMProvider, type LLMUsage, type ModelInfo } from './llm/client.ts';
 import { validatePack, type PromptPack } from './prompts/pack.ts';
 import type { SeoRun } from './seo/engine.ts';
+import { EMPTY_NAVER_KEYS, normalizeNaverKeys, type BlogHit, type NaverKeys, type NewsHit } from './naver/api.ts';
 import { normalizeVoice, type VoiceState } from './voice/library.ts';
 
 export interface SavedKey {
   key: string;
   /** 고른 모델 */
   model: string;
-  /** [확인]을 눌렀을 때 받아 온 모델 목록 */
+  /** 받아 온 모델 목록. [확인]을 누를 때와, 받은 지 오래됐을 때 새로 받는다 (lib/llm/refresh.ts) */
   models: ModelInfo[];
   checkedAt: string | null;
+  /** 고른 모델이 목록에서 없어져 다른 모델로 바꿨을 때 남기는 안내. 사람이 모델을 고르거나 [확인]을 누르면 지운다 */
+  note?: string;
 }
 
 export type SavedKeys = Partial<Record<LLMProvider, SavedKey>>;
@@ -20,6 +23,8 @@ export type SavedKeys = Partial<Record<LLMProvider, SavedKey>>;
 const KEYS = {
   aiKeys: 'aiKeys',
   lastProvider: 'aiLastProvider',
+  // 추천 모델 규칙을 어느 판까지 반영했는지 (lib/llm/refresh.ts)
+  defaultsVersion: 'aiDefaultsVersion',
   pack: 'promptPack',
   usage: 'aiUsage',
   writeForm: 'writeForm',
@@ -27,6 +32,10 @@ const KEYS = {
   seoRuns: 'seoRuns',
   seoAuto: 'seoAutoForm',
   voice: 'voice',
+  naverKeys: 'naverKeys',
+  // 네이버 키를 서버에서 받았는지 직접 넣었는지. lib/server/session.ts 도 이 자리를 쓴다.
+  naverSource: 'naverKeysSource',
+  research: 'researchBasket',
   // 아래 둘은 lib/server/session.ts 가 다룬다. 바뀌었는지 듣는 데만 쓴다.
   session: 'serverSession',
   packSource: 'promptPackSource',
@@ -79,6 +88,9 @@ export function readyAis(keys: SavedKeys): ReadyAi[] {
   }
   return out;
 }
+
+export const loadDefaultsVersion = () => read<number>(KEYS.defaultsVersion, 0);
+export const saveDefaultsVersion = (version: number) => write(KEYS.defaultsVersion, version);
 
 export const loadLastProvider = () => read<LLMProvider | null>(KEYS.lastProvider, null);
 export const saveLastProvider = (provider: LLMProvider) => write(KEYS.lastProvider, provider);
@@ -190,3 +202,64 @@ export async function loadVoice(): Promise<VoiceState> {
 }
 
 export const saveVoice = (state: VoiceState) => write(KEYS.voice, state);
+
+// ───────── 네이버 API 키 (자료 찾기) ─────────
+
+export async function loadNaverKeys(): Promise<NaverKeys> {
+  return normalizeNaverKeys(await read<unknown>(KEYS.naverKeys, EMPTY_NAVER_KEYS));
+}
+
+/** 설정에서 직접 넣은 키를 저장한다. 서버의 공용 키가 이것을 덮어쓰지 않게 "직접 넣음"으로 적어 둔다 */
+export async function saveNaverKeys(keys: NaverKeys): Promise<void> {
+  await write(KEYS.naverKeys, normalizeNaverKeys(keys));
+  await write(KEYS.naverSource, { from: 'local' });
+}
+
+/** 넣어 둔 키를 지운다. 다음에 서버의 공용 키를 다시 받을 수 있게 표시도 지운다 */
+export async function clearNaverKeys(): Promise<void> {
+  await browser.storage.local.remove([KEYS.naverKeys, KEYS.naverSource]);
+}
+
+// ───────── 자료 탭에서 고른 것 ─────────
+
+/** 글쓰기에 가져갈 키워드와 참고 자료 */
+export interface ResearchBasket {
+  main: string;
+  subs: string[];
+  blogs: BlogHit[];
+  news: NewsHit[];
+  /** [글쓰기에 넣기]를 누른 때. 글쓰기 화면이 키워드를 칸에 옮겨 적을지 알아보는 데 쓴다 */
+  sent_at: string | null;
+}
+
+export const EMPTY_BASKET: ResearchBasket = { main: '', subs: [], blogs: [], news: [], sent_at: null };
+
+/** 한 번에 보내는 참고 자료의 수. 많이 보내면 프롬프트가 길어지고 글이 자료에 끌려간다 */
+export const MAX_BASKET_BLOGS = 5;
+export const MAX_BASKET_NEWS = 5;
+export const MAX_BASKET_SUBS = 8;
+
+export function normalizeBasket(raw: unknown): ResearchBasket {
+  const value = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>;
+  const text = (v: unknown) => (typeof v === 'string' ? v : '');
+  const rows = (v: unknown) => (Array.isArray(v) ? (v.filter((row) => typeof row === 'object' && row !== null) as Record<string, unknown>[]) : []);
+  return {
+    main: text(value.main).trim(),
+    subs: (Array.isArray(value.subs) ? value.subs : []).map(text).map((sub) => sub.trim()).filter(Boolean).slice(0, MAX_BASKET_SUBS),
+    blogs: rows(value.blogs)
+      .map((row) => ({ title: text(row.title), link: text(row.link), description: text(row.description), blogger: text(row.blogger), date: text(row.date) }))
+      .filter((row) => row.title)
+      .slice(0, MAX_BASKET_BLOGS),
+    news: rows(value.news)
+      .map((row) => ({ title: text(row.title), link: text(row.link), description: text(row.description), source: text(row.source), date: text(row.date) }))
+      .filter((row) => row.title)
+      .slice(0, MAX_BASKET_NEWS),
+    sent_at: typeof value.sent_at === 'string' ? value.sent_at : null,
+  };
+}
+
+export async function loadBasket(): Promise<ResearchBasket> {
+  return normalizeBasket(await read<unknown>(KEYS.research, EMPTY_BASKET));
+}
+
+export const saveBasket = (basket: ResearchBasket) => write(KEYS.research, normalizeBasket(basket));

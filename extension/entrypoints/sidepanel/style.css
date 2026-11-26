@@ -256,6 +256,7 @@ input.swatch {
 
 .tabs {
   display: flex;
+  flex-wrap: wrap;
   gap: 4px;
   position: sticky;
   top: 0;
@@ -627,4 +628,134 @@ textarea.field.prose {
   border-radius: 0;
   font-size: 11px;
   color: var(--muted);
+}
+
+/* 자료 탭 */
+button.small {
+  padding: 3px 8px;
+  font-size: 12px;
+}
+
+button.small.on {
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.keyword-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 0;
+  border-top: 1px solid var(--line);
+}
+
+.keyword-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.keyword-buttons {
+  display: flex;
+  flex: none;
+  gap: 4px;
+}
+
+.hit-row {
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+}
+
+.hit-row a {
+  color: var(--accent);
+  font-weight: 600;
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+.hit-row a:hover {
+  text-decoration: underline;
+}
+
+.hit-text {
+  margin: 2px 0 0;
+  font-size: 13px;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 0 0 6px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 4px 2px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 12px;
+  background: var(--bg);
+}
+
+.chip-remove {
+  padding: 0 5px;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.2;
+}
+
+/* 자료 탭 안의 작은 탭: 키워드, 블로그 글, 뉴스를 하나씩 본다 */
+.subtabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--line);
+  /* 긴 목록을 내려 봐도 작은 탭은 위쪽 탭 줄 바로 아래에 붙어 있다 */
+  position: sticky;
+  top: var(--tabs-h, 44px);
+  z-index: 1;
+  background: var(--bg);
+}
+
+/* 여러 개 중 하나를 고르는 작은 버튼 줄 (정렬, 몇 개씩 볼지) */
+.choice-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin: 0 0 8px;
+}
+
+.choice-row .hint {
+  margin: 0 4px 0 0;
+}
+
+.subtab {
+  flex: 1 1 0;
+  padding: 7px 4px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: none;
+  font-size: 13px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.subtab.active {
+  border-bottom-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.subtab-picked {
+  font-size: 11px;
+  font-weight: 400;
 }

@@ -96,6 +96,9 @@ export const OPTIONAL_GLUE_KEYS = [
   'review.purchase_sponsored',
   'review.purchase_none',
   'review.no_notes',
+  // 자료 찾기에서 고른 뉴스를 글쓰기에 참고로 붙이기
+  'research.news_head',
+  'research.news_item',
 ] as const;
 
 export function glue(pack: PromptPack, key: GlueKey): string {

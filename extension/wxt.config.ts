@@ -22,6 +22,9 @@ export default defineConfig({
         'https://generativelanguage.googleapis.com/*',
         'https://api.openai.com/*',
         'https://api.anthropic.com/*',
+        // 자료 찾기: 뉴스·블로그 글 찾기(검색 API)와 키워드의 검색 수(검색광고 API). 읽기만 한다
+        'https://openapi.naver.com/*',
+        'https://api.searchad.naver.com/*',
         ...(serverUrl ? [`${serverUrl}/*`] : []),
         ...(webUrl ? [`${webUrl}/*`] : []),
       ],

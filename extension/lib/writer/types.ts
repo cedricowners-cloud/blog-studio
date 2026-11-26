@@ -20,6 +20,17 @@ export interface ResearchContextItem {
   bloggername?: string;
 }
 
+/** 참고 뉴스 한 건. 확장의 자료 찾기에서 고른 것이다 (웹에는 없다) */
+export interface NewsContextItem {
+  title: string;
+  description?: string;
+  link?: string;
+  /** 언론사 사이트 이름 */
+  source?: string;
+  /** 2026-11-18 모양 */
+  date?: string;
+}
+
 export const AWARENESS_LEVELS = ['L1', 'L2', 'L3', 'L4'] as const;
 export type AwarenessLevel = (typeof AWARENESS_LEVELS)[number];
 
@@ -46,6 +57,8 @@ export interface BlogGenerationInput {
   brand_voice?: BrandVoice | null;
   generation_options?: GenerationOptions;
   research_context?: ResearchContextItem[];
+  /** 참고 뉴스. 확장에만 있다. 묶음에 글 조각(research.news_*)이 없으면 보내지 않는다 */
+  news_context?: NewsContextItem[];
 }
 
 export const DEFAULT_OPTIONS: Required<GenerationOptions> = {

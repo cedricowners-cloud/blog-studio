@@ -69,6 +69,11 @@
     { id: 'fake-small', label: '가짜 작은 모델', maxOutput: 8192 },
   ];
 
+  // ?naver=1 은 네이버 API 키를 넣어 둔 것처럼 꾸민다 (가짜 키다).
+  if (params.get('naver')) {
+    store.naverKeys = { clientId: 'preview-id', clientSecret: 'preview-secret', license: 'preview-license', secret: 'preview-ad-secret', customerId: '1234567' };
+  }
+
   if (params.get('keys')) {
     store.aiKeys = { gemini: { key: 'preview-key-0000', model: 'fake-large', models: MODELS, checkedAt: new Date().toISOString() } };
   }
@@ -144,6 +149,10 @@
     if (pathname === '/auth/v1/user') return reply(200, PREVIEW_USER);
     const denied = params.get('server') === 'denied';
     if (pathname === '/rest/v1/prompt_access') return reply(200, denied ? [] : [{ user_id: PREVIEW_USER.id }]);
+    // 가족이 함께 쓰는 네이버 키. ?shared=1 이면 서버에 올려 둔 것처럼 꾸민다 (가짜 키다).
+    if (pathname === '/rest/v1/shared_keys') {
+      return reply(200, params.get('shared') && !denied ? [{ keys: { clientId: 'shared-id', clientSecret: 'shared-secret', license: 'shared-license', secret: 'shared-ad-secret', customerId: '7654321' }, updated_at: '2026-11-18T12:00:00+00:00' }] : []);
+    }
     if (pathname === '/rest/v1/prompt_packs') {
       if (denied) return reply(200, []);
       const pack = await realFetch('/__pack.json').then((r) => r.json());
@@ -156,6 +165,28 @@
   window.fetch = async (input, init) => {
     const url = String(input);
     if (/\.supabase\.co\//.test(url)) return fakeServer(url, init ?? {});
+    // 네이버 API: 진짜 네이버를 부르지 않고 가짜 결과를 돌려준다. 키가 'bad' 로 시작하면 틀린 키로 본다.
+    if (/openapi\.naver\.com\/v1\/search\//.test(url)) {
+      const kind = /search\/(\w+)\.json/.exec(url)?.[1];
+      const q = new URL(url).searchParams.get('query') ?? '';
+      if (String(init?.headers?.['X-Naver-Client-Secret'] ?? '').startsWith('bad')) return reply(401, { errorMessage: 'NID AUTH Result Invalid (28)', errorCode: '024' });
+      const sp = new URL(url).searchParams;
+      const newest = sp.get('sort') === 'date';
+      const items = Array.from({ length: Math.min(Number(sp.get('display') ?? 10), kind === 'news' ? 43 : 50) }, (_, i) =>
+        kind === 'news'
+          ? { title: `<b>${q}</b> ${newest ? '최신' : '관련'} 가짜 기사 ${i + 1} &quot;제목&quot;`, originallink: `https://www.example-news${i + 1}.com/a/${i + 1}`, link: `https://n.news.naver.com/article/00${i + 1}/000${i + 1}`, description: `가짜 기사 요약 ${i + 1}입니다. <b>${q}</b> 관련 내용.`, pubDate: `Wed, ${String(18 - (i % 17)).padStart(2, '0')} Nov 2026 09:00:00 +0900` }
+          : { title: `<b>${q}</b> 가짜 블로그 글 ${i + 1}`, link: `https://blog.naver.com/fake${i + 1}/22000000000${i}`, description: `가짜 요약 ${i + 1}입니다. <b>${q}</b>에 대해 씁니다.`, bloggername: `가짜 블로거 ${i + 1}`, postdate: `202611${String(10 + (i % 18))}` },
+      );
+      return reply(200, { total: kind === 'news' ? 6422 : 34939, start: 1, display: items.length, items });
+    }
+    if (/api\.searchad\.naver\.com\/keywordstool/.test(url)) {
+      if (!init?.headers?.['X-Signature']) return reply(403, { title: 'Invalid Signature' });
+      const hint = (new URL(url).searchParams.get('hintKeywords') ?? '').split(',')[0];
+      const keywordList = [{ relKeyword: hint, monthlyPcQcCnt: 2090, monthlyMobileQcCnt: 2140, compIdx: '높음' }].concat(
+        Array.from({ length: 119 }, (_, i) => ({ relKeyword: `${hint}${['추천', '비교', '가격', '후기', '연결'][i % 5]}${i + 1}`, monthlyPcQcCnt: i % 5 === 4 ? '< 10' : 900 + ((i * 37) % 400), monthlyMobileQcCnt: i % 5 === 4 ? '< 10' : 100 + ((i * 113) % 3000), compIdx: ['높음', '중간', '낮음'][i % 3] })),
+      );
+      return reply(200, { keywordList });
+    }
     if (!/generativelanguage\.googleapis\.com|api\.openai\.com|api\.anthropic\.com/.test(url)) return realFetch(input, init);
     if ((init?.method ?? 'GET') === 'GET') {
       if (params.get('badkey')) return new Response(JSON.stringify({ error: { message: 'API key not valid.' } }), { status: 400 });

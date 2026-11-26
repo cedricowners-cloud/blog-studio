@@ -1,7 +1,7 @@
 import { defineBackground } from '#imports';
 import { browser } from 'wxt/browser';
 import { WEB_URL } from '../lib/server/config';
-import { completeLoginFromUrl, syncPack } from '../lib/server/session';
+import { completeLoginFromUrl, syncPack, syncSharedKeys } from '../lib/server/session';
 
 // 배경에서 도는 코드.
 //   - 확장 아이콘을 누르면 사이드 패널이 열리게 한다.
@@ -39,6 +39,8 @@ export default defineBackground(() => {
         // 로그인 정보가 든 주소를 화면에서 치우고, 로그인됐다고 알려 준다.
         await browser.tabs.update(tabId, { url: browser.runtime.getURL('/login-done.html') });
         await syncPack().catch((err: unknown) => console.error('프롬프트 받기 실패:', err));
+        // 가족이 함께 쓰는 네이버 키도 받는다. 실패해도 로그인은 된 것이다.
+        await syncSharedKeys().catch((err: unknown) => console.error('공용 키 받기 실패:', err));
       } catch (err) {
         console.error('링크로 로그인 실패:', err);
       } finally {

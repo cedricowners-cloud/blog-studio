@@ -125,6 +125,10 @@ function readApiError(bodyText: string): ApiErrorInfo {
 function errorFromStatus(provider: LLMProvider, status: number, bodyText: string, apiKey: string): LLMError {
   const detail = scrub(readApiError(bodyText).message, apiKey);
   const name = NAMES[provider];
+  // 충전한 돈이 없거나 다 썼을 때. 회사마다 번호가 다르다 (Claude 는 400, GPT 는 429).
+  if (/credit balance|insufficient_quota|exceeded your current quota|billing/i.test(detail)) {
+    return new LLMError('auth', `${name} 계정에 쓸 수 있는 돈(크레딧)이 없어요. 키 발급 페이지의 결제 화면에서 충전하거나 결제 수단을 등록해 주세요. (${status}: ${detail})`, status);
+  }
   if (status === 401 || status === 403) {
     return new LLMError('auth', `${name} 키가 맞지 않거나 쓸 권한이 없어요. 설정에서 키를 확인해 주세요. (${status}: ${detail})`, status);
   }
@@ -313,8 +317,15 @@ function geminiParts(m: ChatMessage): unknown[] {
   return parts;
 }
 
+/**
+ * temperature 를 받지 않는다고 알게 된 모델 (`${provider}:${model}`).
+ * 새 GPT 모델이 그렇다. 부를 때마다 거절당하고 다시 보내지 않게, 패널이 열려 있는 동안 기억해 둔다.
+ */
+const NO_TEMPERATURE = new Set<string>();
+
 function prepare(messages: ChatMessage[], opts: LLMOptions): Prepared {
-  const { provider, model, apiKey, maxTokens, temperature } = opts;
+  const { provider, model, apiKey, maxTokens } = opts;
+  const temperature = NO_TEMPERATURE.has(`${provider}:${model}`) ? undefined : opts.temperature;
   if (provider === 'anthropic') {
     return {
       url: 'https://api.anthropic.com/v1/messages',
@@ -419,9 +430,13 @@ export async function llmChat(messages: ChatMessage[], opts: LLMOptions): Promis
 
       if (!res.ok) {
         const bodyText = await res.text().catch(() => '');
-        if (res.status === 400 && adaptations < 2 && adaptBody(opts.provider, prepared.body, readApiError(bodyText))) {
-          adaptations += 1;
-          continue;
+        if (res.status === 400 && adaptations < 2) {
+          const hadTemperature = JSON.stringify(prepared.body).includes('"temperature"');
+          if (adaptBody(opts.provider, prepared.body, readApiError(bodyText))) {
+            if (hadTemperature && !JSON.stringify(prepared.body).includes('"temperature"')) NO_TEMPERATURE.add(`${opts.provider}:${opts.model}`);
+            adaptations += 1;
+            continue;
+          }
         }
         const error = errorFromStatus(opts.provider, res.status, bodyText, opts.apiKey);
         const wait = RETRY_WAITS_MS[retries];
@@ -460,8 +475,10 @@ export function llmGenerate(prompt: string, opts: LLMOptions, images?: LLMImage[
 
 // ───────────────────────── 모델 목록 ─────────────────────────
 
-const OPENAI_NOT_CHAT = /audio|realtime|tts|transcribe|whisper|image|embedding|moderation|search|instruct|dall-e|codex|computer-use/i;
-const GEMINI_NOT_CHAT = /embedding|image|tts|live|audio|aqa|robotics|computer-use/i;
+// 글을 쓰는 모델이 아닌 것들. live 는 음성 대화용이다. pro 는 값이 아주 비싸고, 여기서 쓰는 호출 방식(Chat Completions)으로는 부를 수 없다.
+const OPENAI_NOT_CHAT = /audio|realtime|tts|transcribe|whisper|image|embedding|moderation|search|instruct|dall-e|codex|computer-use|live|-pro(?:-|$)/i;
+// 글을 쓰는 모델이 아닌 것들: 그림·영상·소리를 만들거나, 조사·조작을 대신 하는 모델
+const GEMINI_NOT_CHAT = /embedding|image|nano-banana|tts|transcribe|live|audio|aqa|robotics|computer-use|customtools|omni|deep-research|decision|antigravity/i;
 
 /**
  * 이 키로 쓸 수 있는 글쓰기 모델 목록을 받아 온다. 키가 맞는지 확인하는 데도 쓴다 (돈이 들지 않는다).
@@ -506,6 +523,11 @@ export async function listModels(provider: LLMProvider, apiKey: string, fetchImp
     return rows
       .filter((r): r is { id: string; created?: number } => typeof r.id === 'string')
       .filter((r) => /^(gpt-|o\d|chatgpt-)/.test(r.id) && !OPENAI_NOT_CHAT.test(r.id))
+      // 날짜가 붙은 이름(gpt-5.5-2026-04-23)은 같은 모델의 고정판이다. 날짜 없는 이름이 있으면 그것만 보여 준다.
+      .filter((r, _i, all) => {
+        const base = /^(.*)-\d{4}-\d{2}-\d{2}$/.exec(r.id)?.[1];
+        return !base || !all.some((other) => other.id === base);
+      })
       .sort((a, b) => (b.created ?? 0) - (a.created ?? 0))
       .map((r) => ({ id: r.id, label: r.id }));
   }
@@ -536,24 +558,40 @@ function byVersionDesc(a: ModelInfo, b: ModelInfo): number {
   return 0;
 }
 
+/** 판이 높은 것이 먼저, 판이 같으면 names 에 먼저 적힌 줄이 먼저 오게 정렬한다 */
+function newestFirst(list: ModelInfo[], names: RegExp[] = []): ModelInfo[] {
+  const rank = (id: string) => {
+    const index = names.findIndex((name) => name.test(id));
+    return index < 0 ? names.length : index;
+  };
+  return list
+    .map((model, index) => ({ model, index }))
+    .sort((x, y) => byVersionDesc(x.model, y.model) || rank(x.model.id) - rank(y.model.id) || x.index - y.index)
+    .map((item) => item.model);
+}
+
 /**
- * 목록에서 처음 골라 둘 모델을 정한다. 글쓰기에는 큰 모델이 낫다.
- * 모델 이름을 적어 두지 않고 이름의 모양으로 고른다. 사람이 언제든 바꿀 수 있다.
+ * 목록에서 처음 골라 둘 모델을 정한다. 사람이 언제든 바꿀 수 있다.
+ * 모델 이름을 하나하나 적어 두지 않고, 이름의 모양으로 고른다. 새 모델이 나오면 판이 높은 쪽이 골라진다.
+ * 아래 줄 이름은 2026년 11월의 각 회사 문서를 보고 정했다. 이름이 또 바뀌면 여기를 고친다.
+ *   Claude : 회사가 "잘 모르겠으면 이것부터"라고 권하는 Opus 줄. 가장 비싼 Fable 줄은 고르지 않는다.
+ *   GPT    : 날마다 쓰는 일에 권하는 Sol 줄 (GPT-6 부터 줄 이름이 붙는다). 가장 비싼 Astra 줄은 고르지 않는다.
+ *   Gemini : 판이 가장 높은 것. 같은 판 안에서는 무료 한도가 있는 Hydrogen 을 먼저 고른다
+ *            (Carbon 과 Argon 은 유료 키에서만 된다). 미리보기 모델과 lite 모델은 뒤로 미룬다.
  */
 export function pickDefaultModel(provider: LLMProvider, models: ModelInfo[]): string {
   if (models.length === 0) return '';
   const first = (list: ModelInfo[]) => list[0]?.id;
+  const fallback = (models[0] as ModelInfo).id;
   if (provider === 'anthropic') {
-    // 목록은 새 모델이 앞에 온다
-    return first(models.filter((m) => /opus/.test(m.id))) ?? first(models.filter((m) => /sonnet/.test(m.id))) ?? (models[0] as ModelInfo).id;
+    return first(newestFirst(models.filter((m) => /opus/.test(m.id)))) ?? first(newestFirst(models.filter((m) => /sonnet/.test(m.id)))) ?? fallback;
   }
   if (provider === 'gemini') {
-    const stable = models.filter((m) => /^gemini-[\d.]+-pro$/.test(m.id)).sort(byVersionDesc);
-    const anyPro = models.filter((m) => /pro/.test(m.id)).sort(byVersionDesc);
-    return first(stable) ?? first(anyPro) ?? (models[0] as ModelInfo).id;
+    const settled = models.filter((m) => !/preview|exp|lite|latest/.test(m.id));
+    const tiers = [/hydrogen/, /pro/, /flash/, /argon/, /carbon/];
+    return first(newestFirst(settled, tiers)) ?? first(newestFirst(models.filter((m) => !/lite|latest/.test(m.id)), tiers)) ?? fallback;
   }
-  const plain = models.filter((m) => /^gpt-[\d.]+$/.test(m.id)).sort(byVersionDesc);
-  return first(plain) ?? (models[0] as ModelInfo).id;
+  return first(newestFirst(models.filter((m) => /^gpt-[\d.]+(?:-sol)?$/.test(m.id)))) ?? fallback;
 }
 
 /**

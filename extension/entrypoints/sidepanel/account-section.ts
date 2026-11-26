@@ -15,6 +15,7 @@ import {
   syncPack,
   takeLoginNote,
   type SyncResult,
+  syncSharedKeys,
 } from '../../lib/server/session';
 import { hasOutdatedPack, loadPack, onStoreChange, savePack } from '../../lib/store';
 import { errorText, guarded, h, setMessage, type Tone } from './dom';
@@ -160,6 +161,8 @@ export function createAccountCard(): HTMLElement {
 
   async function runSync(quiet: boolean): Promise<void> {
     const result = await syncPack();
+    // 가족이 함께 쓰는 네이버 키도 같이 받는다 (설정의 "네이버 API 키" 칸에 나타난다). 실패해도 프롬프트와는 상관없다.
+    if (result.status !== 'signed-out') await syncSharedKeys().catch(() => undefined);
     // 창을 열 때 조용히 확인하는 경우에는, 바뀐 것이 없으면 아무 말도 하지 않는다.
     if (!(quiet && (result.status === 'same' || result.status === 'signed-out'))) {
       const { text, tone } = explainSync(result);

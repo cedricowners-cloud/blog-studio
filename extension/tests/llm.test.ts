@@ -420,3 +420,33 @@ test('사진 보내기: 키는 사진을 보낼 때도 헤더에만 있다', asy
   assert.ok(!calls[0]!.url.includes(KEY));
   assert.ok(!JSON.stringify(calls[0]!.body).includes(KEY));
 });
+
+test('GPT: temperature 를 받지 않는 모델은 한 번 거절당한 뒤로는 처음부터 보내지 않는다', async () => {
+  const refuse = json(400, { error: { message: "Unsupported parameter: 'temperature' is not supported with this model.", type: 'invalid_request_error', param: 'temperature' } });
+  const { fetchImpl, calls } = fakeFetch([refuse, sse(openaiStream(['첫 답'])), sse(openaiStream(['둘째 답']))]);
+  const o = opts({ provider: 'openai', model: 'gpt-remember-test', temperature: 0.7, fetchImpl });
+  assert.equal((await llmGenerate('하나', o)).text, '첫 답');
+  assert.equal((await llmGenerate('둘', o)).text, '둘째 답');
+  assert.equal(calls.length, 3, '두 번째 부를 때는 거절당하지 않는다');
+  assert.equal('temperature' in calls[0]!.body, true);
+  assert.equal('temperature' in calls[1]!.body, false);
+  assert.equal('temperature' in calls[2]!.body, false);
+  // 다른 모델에는 여전히 보낸다
+  const other = fakeFetch([sse(openaiStream(['답']))]);
+  await llmGenerate('셋', opts({ provider: 'openai', model: 'gpt-other-model', temperature: 0.7, fetchImpl: other.fetchImpl }));
+  assert.equal(other.calls[0]!.body.temperature, 0.7);
+});
+
+test('오류 안내: 충전한 돈이 없으면 쉬운 말로 알려 준다', async () => {
+  const claude = fakeFetch([json(400, { type: 'error', error: { type: 'invalid_request_error', message: 'Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.' } })]);
+  await assert.rejects(
+    () => llmGenerate('글', opts({ provider: 'anthropic', fetchImpl: claude.fetchImpl })),
+    (err: unknown) => err instanceof LLMError && /돈\(크레딧\)이 없어요/.test(err.message) && !err.message.includes(KEY),
+  );
+  const gpt = fakeFetch([json(429, { error: { message: 'You exceeded your current quota, please check your plan and billing details.', type: 'insufficient_quota', code: 'insufficient_quota' } })]);
+  await assert.rejects(
+    () => llmGenerate('글', opts({ provider: 'openai', fetchImpl: gpt.fetchImpl })),
+    (err: unknown) => err instanceof LLMError && /돈\(크레딧\)이 없어요/.test(err.message),
+  );
+  assert.equal(gpt.calls.length, 1, '돈이 없는 것은 기다렸다 다시 해도 소용없다. 다시 시도하지 않는다');
+});

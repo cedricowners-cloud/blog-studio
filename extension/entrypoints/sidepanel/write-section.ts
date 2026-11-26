@@ -1,8 +1,21 @@
 import { llmGenerate, resolveMaxTokens } from '../../lib/llm/client';
 import type { PromptPack } from '../../lib/prompts/pack';
-import { addUsage, loadHistory, loadPack, loadWriteForm, onStoreChange, pushHistory, saveWriteForm, type WrittenPost } from '../../lib/store';
+import {
+  addUsage,
+  EMPTY_BASKET,
+  loadBasket,
+  loadHistory,
+  loadPack,
+  loadWriteForm,
+  onStoreChange,
+  pushHistory,
+  saveBasket,
+  saveWriteForm,
+  type ResearchBasket,
+  type WrittenPost,
+} from '../../lib/store';
 import type { AxiomFailedItem } from '../../lib/writer/axiom-validator';
-import { buildFullPrompt, checkInput, findMethod } from '../../lib/writer/prompt-builder';
+import { buildFullPrompt, canUseNews, checkInput, findMethod } from '../../lib/writer/prompt-builder';
 import { run, type LoopResult } from '../../lib/writer/retry-loop';
 import {
   AWARENESS_LEVELS,
@@ -22,6 +35,7 @@ import { errorText, field, guarded, h, num, option, seconds, setMessage } from '
 export interface WriteDeps {
   sendToFill: (title: string, body: string) => void;
   openSettings: () => void;
+  openResearch: () => void;
 }
 
 const AWARENESS_LABELS: Record<AwarenessLevel, string> = {
@@ -62,6 +76,11 @@ interface ShownPost {
 export function createWriteSection(deps: WriteDeps): HTMLElement {
   let pack: PromptPack | null = null;
   let stopper: AbortController | null = null;
+  /** 자료 탭에서 고른 키워드와 참고 자료 */
+  let basket: ResearchBasket = { ...EMPTY_BASKET };
+  /** 칸에 옮겨 적은 마지막 [글쓰기에 넣기]의 때. 같은 것을 두 번 옮겨 적지 않는다 */
+  let basketApplied: string | null = null;
+  const basketBox = h('div', { class: 'notice' });
 
   const needPack = h('section', { class: 'card' },
     h('h2', null, '글쓰기'),
@@ -158,7 +177,48 @@ export function createWriteSection(deps: WriteDeps): HTMLElement {
       author_persona: authorPersona.value.trim() || undefined,
       brand_voice: brand.author_identity || brand.consultancy_name ? brand : undefined,
       domain_info: parseFacts(),
+      // 자료 탭에서 고른 블로그 글은 웹의 "상위 글 조사"와 같은 자리에, 뉴스는 그 뒤에 붙는다.
+      ...(basket.blogs.length > 0
+        ? { research_context: basket.blogs.map((hit) => ({ title: hit.title, description: hit.description, link: hit.link, bloggername: hit.blogger })) }
+        : {}),
+      ...(basket.news.length > 0 ? { news_context: basket.news.map((hit) => ({ title: hit.title, description: hit.description, link: hit.link, source: hit.source, date: hit.date })) } : {}),
     };
+  }
+
+  /** 자료 탭에서 고른 것을 보여 주고, 새로 넘어온 키워드는 칸에 옮겨 적는다 */
+  function drawBasket(): void {
+    const blogs = basket.blogs.length;
+    const news = basket.news.length;
+    basketBox.hidden = blogs === 0 && news === 0;
+    if (basketBox.hidden) return;
+    const look = h('button', { type: 'button' }, '자료 탭에서 보기');
+    look.addEventListener('click', deps.openResearch);
+    const drop = h('button', { type: 'button' }, '참고 자료 빼기');
+    drop.addEventListener('click', () => void saveBasket({ ...basket, blogs: [], news: [] }));
+    const newsOff = news > 0 && pack !== null && !canUseNews(pack);
+    const parts: (HTMLElement | null)[] = [
+      h('p', { class: 'label' }, '참고 자료'),
+      h('p', { class: 'hint small' }, `자료 탭에서 고른 블로그 글 ${blogs}개와 뉴스 ${news}건을 글을 만들 때 함께 보내요. AI에게는 베끼지 말고 다르게 쓰라고 해요.`),
+      newsOff ? h('p', { class: 'message warn' }, '받아 둔 프롬프트가 예전 것이라 뉴스는 보내지 못해요. 설정에서 [프롬프트 새로 받기]를 눌러 주세요.') : null,
+      h('div', { class: 'buttons' }, look, drop),
+    ];
+    basketBox.replaceChildren(...parts.filter((node): node is HTMLElement => node !== null));
+  }
+
+  async function refreshBasket(first = false): Promise<void> {
+    basket = await loadBasket();
+    // 패널을 처음 열 때는 옮겨 적지 않는다. 그 뒤에 사람이 칸을 고쳤을 수 있다.
+    if (first) basketApplied = basket.sent_at;
+    if (basket.sent_at && basket.sent_at !== basketApplied) {
+      basketApplied = basket.sent_at;
+      if (basket.main) {
+        mainKeyword.value = basket.main;
+        if (!topic.value.trim()) topic.value = basket.main;
+      }
+      if (basket.subs.length > 0) subKeywords.value = basket.subs.join(', ');
+      remember();
+    }
+    drawBasket();
   }
 
   function showPost(post: ShownPost): void {
@@ -422,6 +482,7 @@ export function createWriteSection(deps: WriteDeps): HTMLElement {
     field('글쓴이의 말투', authorPersona),
     h('label', { class: 'labeled' }, h('span', { class: 'label' }, '사실 자료'), facts, factsHint),
     h('div', { class: 'buttons' }, templateButton),
+    basketBox,
     h('details', { class: 'more' },
       h('summary', null, '자세히'),
       field('검색 의도', searchIntent),
@@ -451,9 +512,11 @@ export function createWriteSection(deps: WriteDeps): HTMLElement {
       if (typeof value === 'string' && value) el.value = value;
     }
     if (pack) drawFactsHint();
+    await refreshBasket(true);
     await drawHistory();
   })();
-  onStoreChange(['pack'], () => void reload());
+  onStoreChange(['pack'], () => void reload().then(drawBasket));
+  onStoreChange(['research'], () => void refreshBasket());
 
   return root;
 }

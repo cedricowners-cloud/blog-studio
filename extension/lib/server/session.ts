@@ -1,7 +1,9 @@
 import { browser } from 'wxt/browser';
+import { hasAdKeys, hasSearchKeys, normalizeNaverKeys } from '../naver/api.ts';
 import { validatePack } from '../prompts/pack.ts';
 import {
   fetchPack,
+  fetchSharedKeys,
   fetchUser,
   isExpiring,
   linkErrorFromUrl,
@@ -26,6 +28,9 @@ const SOURCE_KEY = 'promptPackSource';
 const EMAIL_KEY = 'serverLastEmail';
 const PENDING_KEY = 'serverPendingLogin';
 const NOTE_KEY = 'serverLoginNote';
+// 네이버 키는 lib/store.ts 가 다루는 것과 같은 자리다. 서버에서 받은 것인지 직접 넣은 것인지 같이 적어 둔다.
+const NAVER_KEY = 'naverKeys';
+const NAVER_SOURCE_KEY = 'naverKeysSource';
 
 /** 로그인 메일을 보낸 뒤 이 시간 안에 링크를 눌러야 확장에 로그인된다 */
 const PENDING_MINUTES = 30;
@@ -187,6 +192,7 @@ export async function logout(): Promise<void> {
   if (session) await signOut(SERVER, session);
   await browser.storage.local.remove([SESSION_KEY, PENDING_KEY]);
   await dropServerPack();
+  await dropServerNaverKeys();
 }
 
 /** 쓸 수 있는 로그인 정보를 돌려준다. 곧 끝나면 새로 받는다. 로그인이 풀렸으면 지우고 null. */
@@ -202,6 +208,7 @@ export async function freshSession(): Promise<Session | null> {
     if (err instanceof ServerError && err.kind === 'expired') {
       await browser.storage.local.remove(SESSION_KEY);
       await dropServerPack();
+      await dropServerNaverKeys();
       return null;
     }
     throw err;
@@ -241,4 +248,56 @@ export async function syncPack(): Promise<SyncResult> {
     [SOURCE_KEY]: { from: 'server', updated_at: fetched.row.updated_at, fetched_at: new Date().toISOString() } satisfies PackSource,
   });
   return { status: same ? 'same' : 'updated', detail: fetched.row.updated_at };
+}
+
+// ───────── 가족이 함께 쓰는 네이버 키 ─────────
+
+export interface NaverKeySource {
+  /** server: 서버에서 받은 공용 키 · local: 이 컴퓨터에서 직접 넣은 키 */
+  from: 'server' | 'local';
+  updated_at?: string;
+}
+
+export async function loadNaverKeySource(): Promise<NaverKeySource | null> {
+  const got = await browser.storage.local.get(NAVER_SOURCE_KEY);
+  const value = got[NAVER_SOURCE_KEY] as NaverKeySource | undefined;
+  return value && (value.from === 'server' || value.from === 'local') ? value : null;
+}
+
+/** 서버에서 받아 둔 공용 키를 지운다. 직접 넣은 키는 그대로 둔다 */
+async function dropServerNaverKeys(): Promise<void> {
+  if ((await loadNaverKeySource())?.from === 'server') await browser.storage.local.remove([NAVER_KEY, NAVER_SOURCE_KEY]);
+}
+
+/**
+ * updated: 새로 받음 · same: 받아 둔 것과 같음 · none: 서버에 없거나 받을 수 없는 계정
+ * kept-local: 직접 넣은 키가 있어서 그대로 둠 · signed-out: 로그인하지 않음
+ */
+export type SharedKeysSync = 'updated' | 'same' | 'none' | 'kept-local' | 'signed-out';
+
+/**
+ * 가족이 함께 쓰는 네이버 키를 서버에서 받아 이 컴퓨터에 둔다.
+ *  - 직접 넣은 키가 있으면 건드리지 않는다. force 면 서버 것으로 바꾼다.
+ *  - 서버에 키가 없거나 받을 수 없게 됐으면, 전에 서버에서 받아 둔 키는 지운다.
+ */
+export async function syncSharedKeys(force = false): Promise<SharedKeysSync> {
+  const session = await freshSession();
+  if (!session) return 'signed-out';
+  const row = await fetchSharedKeys(SERVER, session);
+  const keys = row ? normalizeNaverKeys(row.keys) : null;
+  if (!row || !keys || (!hasSearchKeys(keys) && !hasAdKeys(keys))) {
+    await dropServerNaverKeys();
+    return 'none';
+  }
+  const got = await browser.storage.local.get([NAVER_KEY, NAVER_SOURCE_KEY]);
+  const local = normalizeNaverKeys(got[NAVER_KEY]);
+  const source = (got[NAVER_SOURCE_KEY] ?? null) as NaverKeySource | null;
+  const typedHere = (hasSearchKeys(local) || hasAdKeys(local)) && source?.from !== 'server';
+  if (typedHere && !force) return 'kept-local';
+  const same = source?.from === 'server' && source.updated_at === row.updated_at;
+  await browser.storage.local.set({
+    [NAVER_KEY]: keys,
+    [NAVER_SOURCE_KEY]: { from: 'server', updated_at: row.updated_at } satisfies NaverKeySource,
+  });
+  return same ? 'same' : 'updated';
 }

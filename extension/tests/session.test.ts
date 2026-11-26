@@ -158,3 +158,91 @@ test('링크 로그인: 다른 방법으로 로그인하거나 로그아웃하�
   assert.equal(await session.loadSession(), null);
   assert.equal(await session.loadLastEmail(), 'me@example.com', '이메일은 다음에 다시 적지 않게 남겨 둔다');
 });
+
+// ── 가족이 함께 쓰는 네이버 키 ──
+
+const SHARED = { clientId: 'shared-id', clientSecret: 'shared-secret', license: 'shared-license', secret: 'shared-ad-secret', customerId: '7654321' };
+const sharedRow = (updated_at = '2026-11-18T12:00:00+00:00', keys: unknown = SHARED) => json(200, [{ keys, updated_at }]);
+const signIn = () => {
+  store.serverSession = { access_token: 'my-access', refresh_token: 'my-refresh', expires_at: 1900000000, user: USER };
+};
+
+test('공용 키: 로그인하지 않았으면 서버에 묻지 않는다', async () => {
+  assert.equal(await session.syncSharedKeys(), 'signed-out');
+  assert.equal(calls.length, 0);
+});
+
+test('공용 키: 서버의 키를 받아 이 컴퓨터에 두고, 서버에서 받았다고 적어 둔다', async () => {
+  signIn();
+  responses.push(sharedRow());
+  assert.equal(await session.syncSharedKeys(), 'updated');
+  assert.deepEqual(store.naverKeys, SHARED);
+  assert.deepEqual(await session.loadNaverKeySource(), { from: 'server', updated_at: '2026-11-18T12:00:00+00:00' });
+  assert.equal(calls[0]!.url, 'https://example.supabase.co/rest/v1/shared_keys?id=eq.naver&select=keys,updated_at');
+  assert.equal(calls[0]!.auth, 'Bearer my-access', '내 로그인 정보로 묻는다 (권한은 서버가 가린다)');
+
+  // 다시 물었을 때 같은 것이면 같다고 알려 준다. 서버에서 키를 바꿔 올렸으면 새로 받는다.
+  responses.push(sharedRow());
+  assert.equal(await session.syncSharedKeys(), 'same');
+  responses.push(sharedRow('2026-11-19T00:00:00+00:00', { ...SHARED, clientSecret: 'rotated' }));
+  assert.equal(await session.syncSharedKeys(), 'updated');
+  assert.equal((store.naverKeys as typeof SHARED).clientSecret, 'rotated');
+});
+
+test('공용 키: 직접 넣은 키가 있으면 덮어쓰지 않는다. 일부러 받겠다고 하면 바꾼다', async () => {
+  signIn();
+  const mine = { clientId: 'my-id', clientSecret: 'my-secret', license: '', secret: '', customerId: '' };
+  store.naverKeys = mine;
+  store.naverKeysSource = { from: 'local' };
+  responses.push(sharedRow());
+  assert.equal(await session.syncSharedKeys(), 'kept-local');
+  assert.deepEqual(store.naverKeys, mine);
+
+  responses.push(sharedRow());
+  assert.equal(await session.syncSharedKeys(true), 'updated');
+  assert.deepEqual(store.naverKeys, SHARED);
+  assert.equal((await session.loadNaverKeySource())?.from, 'server');
+});
+
+test('공용 키: 받을 수 없는 계정이거나 서버에 키가 없으면, 전에 서버에서 받은 키는 지운다', async () => {
+  signIn();
+  responses.push(sharedRow());
+  await session.syncSharedKeys();
+  // 서버가 빈 답을 준다: 목록에서 빠졌거나 키를 지웠다
+  responses.push(json(200, []));
+  assert.equal(await session.syncSharedKeys(), 'none');
+  assert.equal(store.naverKeys, undefined);
+  assert.equal(await session.loadNaverKeySource(), null);
+
+  // 쓸 수 있는 키가 하나도 없는 줄도 없는 것으로 본다. 직접 넣은 키는 지우지 않는다.
+  const mine = { clientId: 'my-id', clientSecret: 'my-secret', license: '', secret: '', customerId: '' };
+  store.naverKeys = mine;
+  store.naverKeysSource = { from: 'local' };
+  responses.push(sharedRow('2026-11-18T12:00:00+00:00', { clientId: 'only-id' }));
+  assert.equal(await session.syncSharedKeys(), 'none');
+  assert.deepEqual(store.naverKeys, mine);
+});
+
+test('공용 키: 로그아웃하면 서버에서 받은 키는 지우고, 직접 넣은 키는 남긴다', async () => {
+  signIn();
+  responses.push(sharedRow());
+  await session.syncSharedKeys();
+  responses.push(new Response(null, { status: 204 }));
+  await session.logout();
+  assert.equal(store.naverKeys, undefined);
+  assert.equal(store.naverKeysSource, undefined);
+
+  signIn();
+  store.naverKeys = { ...SHARED, clientId: 'typed-here' };
+  store.naverKeysSource = { from: 'local' };
+  responses.push(new Response(null, { status: 204 }));
+  await session.logout();
+  assert.equal((store.naverKeys as typeof SHARED).clientId, 'typed-here');
+});
+
+test('공용 키: 서버에 표가 아직 없으면 오류로 알려 준다 (부르는 쪽이 넘어간다)', async () => {
+  signIn();
+  responses.push(json(404, { code: 'PGRST205', message: "Could not find the table 'public.shared_keys'" }));
+  await assert.rejects(() => session.syncSharedKeys());
+  assert.equal(store.naverKeys, undefined);
+});

@@ -4,7 +4,7 @@
 //   - 업종 설정 부분은 아직 없다 (로그인을 붙인 뒤에 넣는다).
 // 웹과 같은 글이 나오는지는 tests/parity.test.ts 가 확인한다.
 import { fill, glue, type PromptPack } from '../prompts/pack.ts';
-import { AWARENESS_LEVELS, DEFAULT_OPTIONS, type BlogGenerationInput, type ResearchContextItem } from './types.ts';
+import { AWARENESS_LEVELS, DEFAULT_OPTIONS, type BlogGenerationInput, type NewsContextItem, type ResearchContextItem } from './types.ts';
 
 export function findMethod(pack: PromptPack, methodId: number) {
   return pack.methods.items.find((m) => m.id === methodId) ?? null;
@@ -92,6 +92,26 @@ function buildResearchSection(pack: PromptPack, items: ResearchContextItem[]): s
   return parts.join('\n');
 }
 
+/** 받아 둔 묶음에 참고 뉴스용 글 조각이 있는지 (예전 묶음에는 없다) */
+export function canUseNews(pack: PromptPack): boolean {
+  const pieces = pack.glue as Record<string, unknown>;
+  return typeof pieces['research.news_head'] === 'string' && typeof pieces['research.news_item'] === 'string';
+}
+
+/**
+ * 참고 뉴스. 웹에는 없고 확장에만 있다. 뉴스가 없으면 아무것도 붙이지 않아서, 웹과 같은 입력에는 웹과 같은 프롬프트가 나온다.
+ * 기사는 제목과 요약만 준다. 본문은 가져오지 않는다.
+ */
+function buildNewsSection(pack: PromptPack, items: NewsContextItem[]): string {
+  if (!items || items.length === 0 || !canUseNews(pack)) return '';
+  const pieces = pack.glue as Record<string, string>;
+  const parts: string[] = [fill(pieces['research.news_head'] as string, { count: items.length })];
+  items.forEach((it, i) => {
+    parts.push(fill(pieces['research.news_item'] as string, { n: i + 1, title: it.title, date: it.date || '-', source: it.source || '-', link: it.link || '-', desc: it.description || '-' }), '');
+  });
+  return parts.join('\n');
+}
+
 /** AI에게 보낼 프롬프트 전체를 만든다. */
 export function buildFullPrompt(pack: PromptPack, inp: BlogGenerationInput): string {
   const errs = checkInput(pack, inp);
@@ -102,5 +122,6 @@ export function buildFullPrompt(pack: PromptPack, inp: BlogGenerationInput): str
   const substituted = substituteVariables(pack, pack.methods.common + '\n\n' + method.prompt, inp);
   const inputSection = buildInputSection(pack, inp);
   const researchSection = buildResearchSection(pack, inp.research_context ?? []);
-  return [substituted, inputSection, researchSection, glue(pack, 'output_format')].filter(Boolean).join('\n\n');
+  const newsSection = buildNewsSection(pack, inp.news_context ?? []);
+  return [substituted, inputSection, researchSection, newsSection, glue(pack, 'output_format')].filter(Boolean).join('\n\n');
 }
